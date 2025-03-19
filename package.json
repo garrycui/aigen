@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/SchemaStore/schemastore/master/src/schemas/json/package.json",
+  "name": "aigen-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "web": "cd packages/web && npm run dev",
+    "mobile": "cd packages/mobile && npm run start",
+    "build:web": "cd packages/web && npm run build",
+    "build:mobile": "cd packages/mobile && npm run build",
+    "test:web": "cd packages/web && npm run test",
+    "test:mobile": "cd packages/mobile && npm run test",
+    "server:dev": "cd packages/shared && npm run dev:server",
+    "server:start": "cd packages/shared && npm run start:server",
+    "dev:web": "concurrently \"npm run server:dev\" \"npm run web\"",
+    "dev:mobile": "concurrently \"npm run server:dev\" \"npm run mobile\"",
+    "populate": "cd packages/shared && npm run populate",
+    "backup": "cd packages/shared && npm run backup",
+    "backup:list": "cd packages/shared && npm run backup:list",
+    "backup:restore": "cd packages/shared && npm run backup:restore",
+    "generate-content": "cd packages/shared && npm run generate-content"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.4",
+    "concurrently": "^9.1.2"
+  }
+}
