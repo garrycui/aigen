@@ -3,5 +3,5 @@
   "watch": ["dist/server/server"],
   "ext": "js",
   "ignore": ["node_modules"],
-  "exec": "node dist/server/server/server_dev.js"
+  "exec": "node dist/server/server_dev.js"
 }

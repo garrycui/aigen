@@ -5,7 +5,7 @@
     "moduleResolution": "Bundler", // Change to Bundler to work with ESNext
     "target": "ES2022",
     "lib": ["ES2023"],
-    "outDir": "dist/server",
+    "outDir": "dist",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "noEmit": false,

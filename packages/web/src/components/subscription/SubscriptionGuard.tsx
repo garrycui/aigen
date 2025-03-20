@@ -21,11 +21,14 @@ const SubscriptionGuard: React.FC<SubscriptionGuardProps> = ({ children }) => {
     try {
       const isExpired = user.subscriptionStatus === 'expired';
       const now = new Date();
-      const trialEndsAt = user.trialEndsAt;
-      const isTrialExpired = trialEndsAt ? now > trialEndsAt : true;
-      const subscriptionEnd = user.subscriptionEnd;
+      const trialEndsAt = user.trialEndsAt ? new Date(user.trialEndsAt) : null;
+      const isTrialExpired = trialEndsAt ? now > trialEndsAt : false;
+      const subscriptionEnd = user.subscriptionEnd ? new Date(user.subscriptionEnd) : null;
       const isSubscriptionEnded = subscriptionEnd ? now > subscriptionEnd : false;
-      const hasNoAccess = (isExpired || isSubscriptionEnded) && isTrialExpired;
+      
+      // Fixed logic - check trial expiration separately for users on trial
+      const hasNoAccess = isExpired || isSubscriptionEnded || 
+                         (user.isTrialing && isTrialExpired);
       
       return { hasNoAccess, isLoading: false };
     } catch (error) {
@@ -35,8 +38,8 @@ const SubscriptionGuard: React.FC<SubscriptionGuardProps> = ({ children }) => {
   }, [user]);
 
   useEffect(() => {
-    setIsSubscriptionExpired(subscriptionStatus.hasNoAccess);
-    setIsLoading(subscriptionStatus.isLoading);
+    setIsSubscriptionExpired(subscriptionStatus.hasNoAccess ?? false);
+    setIsLoading(subscriptionStatus.isLoading ?? false);
     
     if (subscriptionStatus.hasNoAccess) {
       setIsModalOpen(true);

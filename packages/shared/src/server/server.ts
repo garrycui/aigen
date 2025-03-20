@@ -484,11 +484,11 @@ app.get('/_ah/health', (_req, res) => {
 });
 
 // Update static file paths for deployment structure
-app.use(express.static(path.join(__dirname, '../../..')));
+app.use(express.static(path.join(__dirname, '../')));
 
 // Update catch-all route
 app.get('*', (_req, res) => {
-  res.sendFile(path.join(__dirname, '../../../index.html'));
+  res.sendFile(path.join(__dirname, '../index.html'));
 });
 
 const PORT = process.env.PORT || 3000;

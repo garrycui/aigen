@@ -10,7 +10,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build:dev-server": "tsc -p tsconfig.server.json && echo \"Development server compiled\"",
     "test": "vitest",
-    "dev:server": "npm run build:dev-server && nodemon dist/server/server/server_dev.js",
+    "dev:server": "npm run build:dev-server && nodemon dist/server/server_dev.js",
     "start:server": "tsx src/server/server.ts",
     "start:prod": "node dist/server/server.js",
     "populate": "node ../../scripts/populateMockData.js",
