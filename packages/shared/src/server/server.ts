@@ -4,12 +4,11 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, updateDoc, collection, getDocs, query, where, getDoc } from 'firebase/firestore';
 import cron from 'node-cron';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { CONTENT_CATEGORIES, generateContent, publishContent } from '../lib/post/contentGenerator.js';
 
-// Create __dirname equivalent for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Create a fixed dirname that works for deployment
+// In production the server runs from the root directory
+const __dirname = process.cwd();
 
 const app = express();
 
@@ -484,12 +483,12 @@ app.get('/_ah/health', (_req, res) => {
   res.status(200).send('OK');
 });
 
-// Serve static files from the dist directory
-app.use(express.static(path.join(__dirname, '../../dist')));
+// Update static file paths for deployment structure
+app.use(express.static(path.join(__dirname, '../../..')));
 
-// Catch-all route to serve index.html for all non-API routes
+// Update catch-all route
 app.get('*', (_req, res) => {
-  res.sendFile(path.join(__dirname, '../../dist/index.html'));
+  res.sendFile(path.join(__dirname, '../../../index.html'));
 });
 
 const PORT = process.env.PORT || 3000;

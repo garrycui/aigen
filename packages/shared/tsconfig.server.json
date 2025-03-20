@@ -1,15 +1,17 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler", // Change to Bundler to work with ESNext
     "target": "ES2022",
     "lib": ["ES2023"],
     "outDir": "dist/server",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "noEmit": false
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "moduleDetection": "force"
   },
-  "include": ["src/server"],
+  "include": ["src/server/server.ts", "src/server/server_dev.ts"],
   "exclude": ["node_modules"]
 }

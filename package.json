@@ -8,21 +8,24 @@
     "packages/*"
   ],
   "scripts": {
-    "web": "cd packages/web && npm run dev",
-    "mobile": "cd packages/mobile && npm run start",
-    "build:web": "cd packages/web && npm run build",
-    "build:mobile": "cd packages/mobile && npm run build",
-    "test:web": "cd packages/web && npm run test",
-    "test:mobile": "cd packages/mobile && npm run test",
-    "server:dev": "cd packages/shared && npm run dev:server",
-    "server:start": "cd packages/shared && npm run start:server",
     "dev:web": "concurrently \"npm run server:dev\" \"npm run web\"",
     "dev:mobile": "concurrently \"npm run server:dev\" \"npm run mobile\"",
+    "build:deploy": "npm run build:all && npm run prepare-deploy",
+    "deploy": "npm run build:deploy && gcloud app deploy dist/app.yaml",
+
+    "web": "cd packages/web && npm run dev",
+    "mobile": "cd packages/mobile && npm run start",
+    "server:dev": "cd packages/shared && npm run dev:server",
+    "build:all": "npm run build:server && npm run build:web",
+    "build:server": "cd packages/shared && npm run build:server",
+    "build:web": "cd packages/web && npm run build",
+    "prepare-deploy": "node scripts/prepare-deployment.js",
+    
     "populate": "cd packages/shared && npm run populate",
+    "generate-content": "cd packages/shared && npm run generate-content",
     "backup": "cd packages/shared && npm run backup",
     "backup:list": "cd packages/shared && npm run backup:list",
-    "backup:restore": "cd packages/shared && npm run backup:restore",
-    "generate-content": "cd packages/shared && npm run generate-content"
+    "backup:restore": "cd packages/shared && npm run backup:restore"
   },
   "devDependencies": {
     "turbo": "^2.4.4",

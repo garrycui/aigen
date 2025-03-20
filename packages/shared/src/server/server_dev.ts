@@ -482,7 +482,7 @@ cron.schedule('0 4,5,16,17 * * *', () => {
 });
 
 // Add an endpoint to manually trigger content generation (for testing in dev)
-app.post('/api/generate-content', async (req, res) => {
+app.post('/api/generate-content', async (_req, res) => {
   try {
     // Start content generation in the background
     generateScheduledContent().catch(error => {
