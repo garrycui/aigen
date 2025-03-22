@@ -10,14 +10,27 @@ import {
   updateCachedUser 
 } from '../common/cache';
 
+// ---------------
+// Type Definitions
+// ---------------
+
 export interface Badge {
   id: string;
   name: string;
   description: string;
   icon: string;
   category: 'achievement' | 'learning' | 'community' | 'milestone';
-  createdAt: Date;
+  createdAt?: Date;
 }
+
+export type DisplayBadge = Omit<Badge, 'createdAt'> & { 
+  earned: boolean;
+  createdAt?: Date;
+};
+
+// ---------------
+// Badge Constants
+// ---------------
 
 export const BADGES = {
   ASSESSMENT_COMPLETE: {
@@ -78,11 +91,63 @@ export const BADGES = {
   }
 };
 
-// New helper to retrieve badge by its id
+// Categories for badges with display names
+export const BADGE_CATEGORIES = {
+  achievement: 'Achievement Badges',
+  learning: 'Learning Badges',
+  community: 'Community Badges',
+  milestone: 'Milestone Badges'
+};
+
+// ---------------
+// Badge Helpers
+// ---------------
+
+/**
+ * Retrieves a badge definition by its ID
+ */
 const getBadgeById = (badgeId: string) => {
   return Object.values(BADGES).find(badge => badge.id === badgeId);
 };
 
+/**
+ * Prepares badges for display by marking which ones are earned
+ * @param earnedBadges List of badges that the user has earned
+ * @returns All badges with an 'earned' property
+ */
+export const prepareBadgesForDisplay = (earnedBadges: Badge[]): DisplayBadge[] => {
+  const earnedBadgeIds = new Set(earnedBadges.map(b => b.id));
+  
+  return Object.values(BADGES).map(badge => ({
+    ...badge,
+    earned: earnedBadgeIds.has(badge.id)
+  })) as DisplayBadge[];
+};
+
+/**
+ * Groups badges by their category
+ * @param badges List of badges with earned property
+ * @returns Object with badges grouped by category
+ */
+export const groupBadgesByCategory = (badges: DisplayBadge[]) => {
+  return badges.reduce((acc, badge) => {
+    if (!acc[badge.category]) {
+      acc[badge.category] = [];
+    }
+    acc[badge.category].push(badge);
+    return acc;
+  }, {} as Record<string, DisplayBadge[]>);
+};
+
+// ---------------
+// Firebase Operations
+// ---------------
+
+/**
+ * Awards a single badge to a user
+ * @param userId The user ID
+ * @param badgeId The badge to award
+ */
 export const awardBadge = async (userId: string, badgeId: string) => {
   try {
     const userData = await getUser(userId);
@@ -92,7 +157,6 @@ export const awardBadge = async (userId: string, badgeId: string) => {
     const badges = userData.badges || [];
     if (badges.includes(badgeId)) return;
     
-    // Use updateUserField instead of direct Firestore update
     await updateUserField(userId, 'badges', arrayUnion(badgeId));
     
     return getBadgeById(badgeId);
@@ -102,7 +166,11 @@ export const awardBadge = async (userId: string, badgeId: string) => {
   }
 };
 
-// New function to award multiple badges at once using batch operations
+/**
+ * Awards multiple badges to a user at once
+ * @param userId The user ID
+ * @param badgeIds The badges to award
+ */
 export const awardMultipleBadges = async (userId: string, badgeIds: string[]) => {
   if (!userId || !badgeIds.length) return [];
   
@@ -128,9 +196,8 @@ export const awardMultipleBadges = async (userId: string, badgeIds: string[]) =>
     
     await batch.commit();
     
-    // Update the cache manually to avoid another Firestore read
+    // Update the cache manually
     const updatedBadges = [...existingBadges, ...newBadgeIds];
-    // Fix the manual cache update
     if (userData) {
       const updatedUserData = {
         ...userData,
@@ -147,6 +214,10 @@ export const awardMultipleBadges = async (userId: string, badgeIds: string[]) =>
   }
 };
 
+/**
+ * Retrieves all badges that a user has earned
+ * @param userId The user ID
+ */
 export const getUserBadges = async (userId: string) => {
   try {
     const userData = await getUser(userId);
@@ -161,6 +232,14 @@ export const getUserBadges = async (userId: string) => {
   }
 };
 
+// ---------------
+// Badge Business Logic
+// ---------------
+
+/**
+ * Checks a user's progress and awards any badges they've earned
+ * @param userId The user ID
+ */
 export const checkAndAwardBadges = async (userId: string) => {
   try {
     const userData = await getUser(userId);

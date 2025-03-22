@@ -6,7 +6,8 @@ import {
 import { 
   fetchPost, createComment, createReply, toggleLike,
   updatePost, deletePost, updateComment, deleteComment,
-  updateReply, deleteReply 
+  updateReply, deleteReply, formatDate, handleCommentLike, handleReplyLike,
+  PostData, CommentData, ReplyData, optimisticLikeToggle, optimisticCommentDelete
 } from '@shared/lib/post/post';
 import { useAuth } from '@context/AuthContext';
 import ReactMarkdown from 'react-markdown';
@@ -14,50 +15,13 @@ import EditPostModal from '@components/post/EditPostModal';
 import DeleteConfirmationModal from '@components/post/DeleteConfirmationModal';
 import EditCommentModal from '@components/post/EditCommentModal';
 
-interface Reply {
-  id: string;
-  content: string;
-  likes_count: number;
-  created_at: any;
-  userId: string;
-  user_name: string;
-  is_liked?: boolean;
-}
-
-interface Comment {
-  id: string;
-  content: string;
-  likes_count: number;
-  created_at: any;
-  userId: string;
-  user_name: string;
-  replies: Reply[];
-  is_liked?: boolean;
-}
-
-interface Post {
-  id: string;
-  title: string;
-  content: string;
-  category: string;
-  image_url?: string;
-  video_url?: string;
-  likes_count: number;
-  comments_count: number;
-  created_at: any;
-  userId: string;
-  user_name: string;
-  comments: Comment[];
-  is_liked?: boolean;
-}
-
 interface ReplyingTo {
   commentId: string;
 }
 
 const PostDetail = () => {
   const { id } = useParams<{ id: string }>();
-  const [post, setPost] = useState<Post | null>(null);
+  const [post, setPost] = useState<PostData & { comments: CommentData[] } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newComment, setNewComment] = useState<string>("");
@@ -81,55 +45,24 @@ const PostDetail = () => {
     commentId?: string;
   } | null>(null);
 
-  const formatDate = (timestamp: any): string => {
-    if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleDateString();
-  };
-
-  const handleLike = async (type: 'post' | 'comment' | 'reply', itemId: string) => {
-    if (!user) {
+  const handleLike = async (type: 'post' | 'comment' | 'reply', itemId: string, commentId?: string) => {
+    if (!user || !post) {
       navigate('/login');
       return;
     }
 
     try {
-      const isLiked = await toggleLike(type, itemId, user.id);
-      
-      // Update local state based on type
-      if (type === 'post' && post) {
-        setPost({
-          ...post,
-          likes_count: post.likes_count + (isLiked ? 1 : -1),
-          is_liked: isLiked
-        });
+      if (type === 'post') {
+        // Use shared optimistic like toggle function
+        await optimisticLikeToggle(
+          post,
+          (updatedPost) => setPost(updatedPost),
+          () => toggleLike(type, itemId, user.id)
+        );
       } else if (type === 'comment') {
-        setPost(currentPost => {
-          if (!currentPost) return null;
-          return {
-            ...currentPost,
-            comments: currentPost.comments.map(comment =>
-              comment.id === itemId
-                ? { ...comment, likes_count: comment.likes_count + (isLiked ? 1 : -1), is_liked: isLiked }
-                : comment
-            )
-          };
-        });
-      } else if (type === 'reply') {
-        setPost(currentPost => {
-          if (!currentPost) return null;
-          return {
-            ...currentPost,
-            comments: currentPost.comments.map(comment => ({
-              ...comment,
-              replies: comment.replies.map(reply =>
-                reply.id === itemId
-                  ? { ...reply, likes_count: reply.likes_count + (isLiked ? 1 : -1), is_liked: isLiked }
-                  : reply
-              )
-            }))
-          };
-        });
+        await handleCommentLike(post.id, itemId, user.id, post, setPost);
+      } else if (type === 'reply' && commentId) {
+        await handleReplyLike(post.id, commentId, itemId, user.id, post, setPost);
       }
     } catch (error) {
       console.error('Error toggling like:', error);
@@ -157,15 +90,14 @@ const PostDetail = () => {
   }, [id]);
 
   const handleComment = async () => {
-    if (!user || !post) {
-      navigate('/login');
+    if (!user || !post || !newComment.trim()) {
       return;
     }
 
     try {
       await createComment(post.id, user.id, user.name, newComment);
       setNewComment('');
-      loadPost(); // Reload the post to show the new comment
+      loadPost();
     } catch (error) {
       console.error('Error posting comment:', error);
       alert('Failed to post comment. Please try again.');
@@ -173,8 +105,7 @@ const PostDetail = () => {
   };
 
   const handleReply = async (commentId: string) => {
-    if (!user || !post) {
-      navigate('/login');
+    if (!user || !post || !replyContent.trim()) {
       return;
     }
 
@@ -182,7 +113,7 @@ const PostDetail = () => {
       await createReply(post.id, commentId, user.id, user.name, replyContent);
       setReplyContent('');
       setReplyingTo(null);
-      loadPost(); // Reload the post to show the new reply
+      loadPost();
     } catch (error) {
       console.error('Error posting reply:', error);
       alert('Failed to post reply. Please try again.');
@@ -193,7 +124,7 @@ const PostDetail = () => {
     if (!user || !post) return;
     try {
       await updatePost(post.id, user.id, updates);
-      await loadPost(); // Reload post to show updates
+      await loadPost();
     } catch (error) {
       console.error('Error updating post:', error);
       throw error;
@@ -223,7 +154,7 @@ const PostDetail = () => {
         if (!editingComment.commentId) return;
         await updateReply(post.id, editingComment.commentId, editingComment.id, user.id, content);
       }
-      await loadPost(); // Reload post to show updates
+      await loadPost();
     } catch (error) {
       console.error('Error updating comment:', error);
       throw error;
@@ -234,15 +165,24 @@ const PostDetail = () => {
     if (!user || !post || !deleteItemId) return;
     try {
       setIsDeleting(true);
+      
       if (deleteType === 'comment') {
-        await deleteComment(post.id, deleteItemId, user.id);
+        // Use shared optimistic comment delete function
+        await optimisticCommentDelete(
+          post.id, 
+          deleteItemId, 
+          user.id, 
+          post, 
+          setPost
+        );
       } else {
         if (!deleteCommentId) return;
         await deleteReply(post.id, deleteCommentId, deleteItemId, user.id);
       }
-      await loadPost(); // Reload post to show updates
     } catch (error) {
       console.error('Error deleting comment:', error);
+      // On error, reload the post to ensure correct state
+      await loadPost();
       throw error;
     } finally {
       setIsDeleting(false);
@@ -363,7 +303,7 @@ const PostDetail = () => {
         <div className="bg-gray-50 p-6">
           <h3 className="font-medium text-gray-900 mb-4">Comments</h3>
           <div className="space-y-4">
-            {post.comments?.map((comment: Comment) => (
+            {post.comments?.map((comment: CommentData) => (
               <CommentSection
                 key={comment.id}
                 comment={comment}
@@ -454,7 +394,7 @@ const PostDetail = () => {
 };
 
 interface CommentSectionProps {
-  comment: Comment;
+  comment: CommentData;
   postId: string;
   currentUserId?: string;
   onReply: (commentId: string) => void;
@@ -464,7 +404,7 @@ interface CommentSectionProps {
   replyContent: string;
   setReplyContent: React.Dispatch<React.SetStateAction<string>>;
   handleReply: (commentId: string) => Promise<void>;
-  handleLike: (type: 'post' | 'comment' | 'reply', itemId: string) => Promise<void>;
+  handleLike: (type: 'post' | 'comment' | 'reply', itemId: string, commentId?: string) => Promise<void>;
   formatDate: (timestamp: any) => string;
 }
 
@@ -563,7 +503,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({
 
       {comment.replies && comment.replies.length > 0 && (
         <div className="ml-4 mt-2 space-y-2">
-          {comment.replies.map((reply: Reply) => (
+          {comment.replies.map((reply: ReplyData) => (
             <div key={reply.id} className="bg-gray-50 p-3 rounded-lg">
               <div className="flex justify-between mb-1">
                 <span className="font-medium text-gray-900">{reply.user_name}</span>
@@ -591,7 +531,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({
               </div>
               <p className="text-gray-600">{reply.content}</p>
               <button
-                onClick={() => handleLike('reply', reply.id)}
+                onClick={() => handleLike('reply', reply.id, comment.id)}
                 className={`text-sm mt-1 ${
                   reply.is_liked
                     ? 'text-indigo-600'

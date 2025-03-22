@@ -13,15 +13,35 @@ import {
   sessionCache,
   responseCache
 } from '../common/cache';
+import {
+  ChatMessage,
+  ChatSession,
+  ChatSessionsDoc,
+  MAX_ACTIVE_SESSIONS,
+  updateLastActiveTime,
+  getUserSessions,
+  initializeSessionsDoc,
+  checkIfStaleChat,
+  formatSessionDate,
+  getSentimentClass,
+  getPaginatedSessionMessages,
+  compactSessionData,
+  archiveOldSessions,
+  getSessionMetadata
+} from './sessionManager';
 
-// Remove duplicate cache definitions - they're already imported from cache.ts
-
-interface ChatMessage {
-  content: string;
-  role: 'user' | 'assistant';
-  sentiment?: 'positive' | 'negative' | 'neutral';
-  timestamp: string;
-}
+// Re-export session manager functions for backward compatibility
+export {
+  getUserSessions,
+  getPaginatedSessionMessages,
+  checkIfStaleChat,
+  formatSessionDate,
+  getSentimentClass,
+  updateLastActiveTime,
+  compactSessionData,
+  archiveOldSessions,
+  getSessionMetadata
+};
 
 /**
  * Initialize chat history for a user in Firestore.
@@ -46,9 +66,12 @@ const initializeChatDoc = async (userId: string) => {
  */
 const analyzeSentiment = (message: string): 'positive' | 'negative' | 'neutral' => {
   if (!message) return 'neutral';
+  
   const intensity = vader.SentimentIntensityAnalyzer.polarity_scores(message);
-  if (intensity?.compound >= 0.05) return 'positive';
-  if (intensity?.compound <= -0.05) return 'negative';
+  if (!intensity) return 'neutral';
+  
+  if (intensity.compound >= 0.05) return 'positive';
+  if (intensity.compound <= -0.05) return 'negative';
   return 'neutral';
 };
 
@@ -170,102 +193,43 @@ async function fetchCombinedContent(searchPhrase: string): Promise<Array<{
 /**
  * Determine if a message has a learning intent or could benefit from resources.
  */
-const determineLearningIntent = async (message: string, chatHistory: ChatMessage[] = []): Promise<"learning" | "other"> => {
-  // Get last few messages to establish context, could add to the lower context
-  const recentMessages = chatHistory.slice(-5);
-  const conversationContext = recentMessages.map(msg => msg.content).join(' ');
-  
+const determineLearningIntent = async (message: string): Promise<"learning" | "other"> => {
   const lower = message.toLowerCase();
   
-  // Expanded keywords for learning intent
-  const learningKeywords = [
+  // Use a Set for faster lookups
+  const learningKeywords = new Set([
     'tutorial', 'guide', 'learn', 'explain', 'how to', 'show me',
     'understand', 'resource', 'teach', 'help me with', 'example',
     'struggle with', 'difficulty', 'confused about', 'more information',
     'guidance', 'advice', 'best practice', 'recommend', 'suggestion'
-  ];
+  ]);
   
-  // Check if current message contains learning keywords
-  const messageHasIntent = learningKeywords.some(keyword => lower.includes(keyword));
+  // Check for keywords more efficiently
+  const messageHasIntent = [...learningKeywords].some(keyword => lower.includes(keyword));
   
-  // Check if the conversation context suggests a learning opportunity
-  const contextHasLearningClues = 
-    lower.includes('improve') || 
-    lower.includes('better') || 
-    lower.includes('want to') ||
-    lower.includes('help me') ||
-    lower.includes('not sure how');
-    
-  return (messageHasIntent || contextHasLearningClues) ? "learning" : "other";
+  // Only check context if needed
+  if (messageHasIntent) return "learning";
+  
+  // Check context clues
+  const contextClues = ['improve', 'better', 'want to', 'help me', 'not sure how'];
+  const contextHasLearningClues = contextClues.some(clue => lower.includes(clue));
+  
+  return contextHasLearningClues ? "learning" : "other";
 };
 
 /**
  * Process a chat message.
  */
 export const processChatMessage = async (userId: string, message: string) => {
-  // Ensure user has session structure
+  // Just call processChatWithSession directly with auto-resolved sessionId
   await migrateToSessions(userId);
-  
-  // Get the current session or create one
   const sessionId = await getOrCreateSession(userId);
-  
-  // Process with the session ID
   return processChatWithSession(userId, sessionId, message);
 };
 
 // New interfaces for session management
-interface ChatSession {
-  id: string;
-  title: string;
-  createdAt: string;
-  lastActiveAt: string;
-  messages: ChatMessage[];
-}
-
-interface ChatSessionsDoc {
-  userId: string;
-  activeSessions: ChatSession[];
-  archivedSessions: ChatSession[];
-  currentSessionId: string;
-  createdAt: any; // Firestore timestamp
-  updatedAt: any; // Firestore timestamp
-}
 
 // Constants for session management
-const MAX_ACTIVE_SESSIONS = 5;
-
-/**
- * Initialize sessions document for a user
- */
-const initializeSessionsDoc = async (userId: string): Promise<string> => {
-  const sessionsRef = doc(db, 'chatSessions', userId);
-  const sessionsDoc = await getDoc(sessionsRef);
-
-  if (!sessionsDoc.exists()) {
-    // Create initial session
-    const sessionId = `session_${Date.now()}`;
-    const newSession: ChatSession = {
-      id: sessionId,
-      title: 'New Conversation',
-      createdAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString(),
-      messages: []
-    };
-
-    await setDoc(sessionsRef, {
-      userId,
-      activeSessions: [newSession],
-      archivedSessions: [],
-      currentSessionId: sessionId,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-
-    return sessionId;
-  }
-
-  return sessionsDoc.data().currentSessionId || '';
-};
 
 /**
  * Get or create a session
@@ -315,44 +279,6 @@ export const getOrCreateSession = async (userId: string): Promise<string> => {
 };
 
 /**
- * Get user's sessions with caching
- */
-export const getUserSessions = async (userId: string): Promise<{
-  activeSessions: ChatSession[];
-  archivedSessions: ChatSession[];
-  currentSessionId: string;
-}> => {
-  if (!userId) throw new Error('User ID is required');
-  
-  const cacheKey = `user-sessions-${userId}`;
-  
-  // Try to get from cache first
-  return sessionCache.getOrSet(cacheKey, async () => {
-    const sessionsRef = doc(db, 'chatSessions', userId);
-    const sessionsDoc = await getDoc(sessionsRef);
-    
-    if (!sessionsDoc.exists()) {
-      // Initialize first
-      await initializeSessionsDoc(userId);
-      const newDoc = await getDoc(sessionsRef);
-      const data = newDoc.data() as ChatSessionsDoc;
-      return {
-        activeSessions: data.activeSessions || [],
-        archivedSessions: data.archivedSessions || [],
-        currentSessionId: data.currentSessionId
-      };
-    }
-    
-    const data = sessionsDoc.data() as ChatSessionsDoc;
-    return {
-      activeSessions: data.activeSessions || [],
-      archivedSessions: data.archivedSessions || [],
-      currentSessionId: data.currentSessionId
-    };
-  }, 60000); // 1-minute cache
-};
-
-/**
  * Set the current active session
  */
 export const setCurrentSession = async (userId: string, sessionId: string): Promise<void> => {
@@ -363,6 +289,12 @@ export const setCurrentSession = async (userId: string, sessionId: string): Prom
     currentSessionId: sessionId,
     updatedAt: serverTimestamp()
   });
+  
+  // Update last active time
+  updateLastActiveTime(sessionId);
+  
+  // Invalidate cache
+  sessionCache.delete(`user-sessions-${userId}`);
 };
 
 /**
@@ -418,57 +350,6 @@ export const createNewSession = async (userId: string): Promise<string> => {
 };
 
 /**
- * Optimize batch updates for session modifications
- */
-const updateSessionWithBatch = async (
-  userId: string, 
-  sessionId: string,
-  updates: Partial<ChatSession>,
-  updateActiveSessions?: ChatSession[]
-) => {
-  const sessionsRef = doc(db, 'chatSessions', userId);
-  const batch = writeBatch(db);
-  
-  // Prepare the update data
-  const updateData: Record<string, any> = {
-    updatedAt: serverTimestamp()
-  };
-  
-  // If we need to update a specific session, use dot notation
-  if (Object.keys(updates).length > 0) {
-    // First, we need to find if session is active or archived
-    const { activeSessions, archivedSessions } = await getUserSessions(userId);
-    
-    const isActive = activeSessions.some(s => s.id === sessionId);
-    const sessionLocation = isActive ? 'activeSessions' : 'archivedSessions';
-    const sessionIndex = isActive 
-      ? activeSessions.findIndex(s => s.id === sessionId)
-      : archivedSessions.findIndex(s => s.id === sessionId);
-    
-    if (sessionIndex !== -1) {
-      // Update each field using dot notation
-      Object.keys(updates).forEach(key => {
-        updateData[`${sessionLocation}.${sessionIndex}.${key}`] = updates[key as keyof ChatSession];
-      });
-    }
-  }
-  
-  // If we're replacing the entire activeSessions array
-  if (updateActiveSessions) {
-    updateData.activeSessions = updateActiveSessions;
-  }
-  
-  // Set the updates in the batch
-  batch.update(sessionsRef, updateData);
-  
-  // Commit the batch
-  await batch.commit();
-  
-  // Invalidate the cache after update
-  sessionCache.delete(`user-sessions-${userId}`);
-}
-
-/**
  * Add message to a specific session with batch operations
  */
 export const addMessageToSession = async (
@@ -477,118 +358,24 @@ export const addMessageToSession = async (
   message: string,
   role: 'user' | 'assistant'
 ): Promise<{ sentiment?: 'positive' | 'negative' | 'neutral' }> => {
+  // Validation
   if (!userId || !sessionId || !message || !role) {
     throw new Error('Missing required fields for adding message');
   }
   
-  const sessionsRef = doc(db, 'chatSessions', userId);
-  const sessionsDoc = await getDoc(sessionsRef);
-  
-  if (!sessionsDoc.exists()) {
-    throw new Error('Chat sessions not found');
-  }
-  
-  const data = sessionsDoc.data() as ChatSessionsDoc;
-  const now = new Date().toISOString();
-  
-  // Create message data
+  // Use single transaction for better performance
   const messageData: ChatMessage = {
     content: message,
     role,
-    timestamp: now
+    timestamp: new Date().toISOString()
   };
   
   if (role === 'user') {
     messageData.sentiment = analyzeSentiment(message);
   }
   
-  // Find the session to update
-  let sessionFound = false;
-  const activeSessions = [...data.activeSessions];
-  
-  // First check active sessions
-  for (let i = 0; i < activeSessions.length; i++) {
-    if (activeSessions[i].id === sessionId) {
-      // Update the session
-      activeSessions[i].messages.push(messageData);
-      activeSessions[i].lastActiveAt = now;
-      
-      // Update session title based on first user message if needed
-      if (activeSessions[i].title === 'New Conversation' && role === 'user') {
-        // Use first few words of message as title
-        const words = message.split(' ');
-        const title = words.slice(0, 4).join(' ') + (words.length > 4 ? '...' : '');
-        activeSessions[i].title = title;
-      }
-      
-      // Use updateSessionWithBatch for efficiency
-      await updateSessionWithBatch(userId, sessionId, {
-        lastActiveAt: now
-      }, activeSessions);
-      
-      sessionFound = true;
-      break;
-    }
-  }
-  
-  if (!sessionFound) {
-    // Check archived sessions
-    const archivedSessions = [...data.archivedSessions];
-    let sessionToActivate = null;
-    
-    for (let i = 0; i < archivedSessions.length; i++) {
-      if (archivedSessions[i].id === sessionId) {
-        // Found in archive, move to active
-        sessionToActivate = archivedSessions.splice(i, 1)[0];
-        sessionToActivate.messages.push(messageData);
-        sessionToActivate.lastActiveAt = now;
-        break;
-      }
-    }
-    
-    if (sessionToActivate) {
-      // Add to beginning of active sessions
-      activeSessions.unshift(sessionToActivate);
-      
-      // Manage active session limit
-      if (activeSessions.length > MAX_ACTIVE_SESSIONS) {
-        // Move oldest sessions to archived
-        const sessionsToArchive = activeSessions.splice(MAX_ACTIVE_SESSIONS);
-        const updatedArchived = [...sessionsToArchive, ...archivedSessions];
-        
-        // Use batch update
-        const batch = writeBatch(db);
-        batch.update(sessionsRef, {
-          activeSessions,
-          archivedSessions: updatedArchived,
-          currentSessionId: sessionId,
-          updatedAt: serverTimestamp()
-        });
-        
-        await batch.commit();
-      } else {
-        // Use batch update
-        const batch = writeBatch(db);
-        batch.update(sessionsRef, {
-          activeSessions,
-          archivedSessions,
-          currentSessionId: sessionId,
-          updatedAt: serverTimestamp()
-        });
-        
-        await batch.commit();
-      }
-      
-      // Invalidate the session cache
-      sessionCache.delete(`user-sessions-${userId}`);
-      
-      sessionFound = true;
-    }
-  }
-  
-  if (!sessionFound) {
-    throw new Error('Session not found');
-  }
+  // Call optimized function
+  await updateSessionWithMessage(userId, sessionId, messageData);
   
   return { sentiment: role === 'user' ? messageData.sentiment : undefined };
 };
@@ -739,6 +526,9 @@ export const processChatWithSession = async (userId: string, sessionId: string, 
 
     // Save AI response to session
     await addMessageToSession(userId, sessionId, aiResponse.response, 'assistant');
+    
+    // Update last active time for the session
+    updateLastActiveTime(sessionId);
 
     const firstResponse = {
       response: aiResponse.response,
@@ -748,7 +538,7 @@ export const processChatWithSession = async (userId: string, sessionId: string, 
     };
 
     // Check if the user has a learning intent
-    const intent = await determineLearningIntent(message, chatHistory);
+    const intent = await determineLearningIntent(message);
 
     if (intent === "learning") {
       // Add recommendations for learning-focused messages
@@ -881,4 +671,318 @@ export const clearAllChatHistory = async (userId: string): Promise<void> => {
       throw error;
     }
   }
+};
+
+/**
+ * Batch process multiple messages at once to reduce Firestore operations
+ */
+export const addMultipleMessagesToSession = async (
+  userId: string,
+  sessionId: string,
+  messages: Array<{ content: string, role: 'user' | 'assistant' }>
+): Promise<void> => {
+  if (!userId || !sessionId || !messages.length) return;
+  
+  const sessionsRef = doc(db, 'chatSessions', userId);
+  
+  // Get current session first
+  const { activeSessions, archivedSessions } = await getUserSessions(userId);
+  
+  let isActive = false;
+  let sessionIndex = activeSessions.findIndex(s => s.id === sessionId);
+  
+  if (sessionIndex === -1) {
+    // Check archived sessions
+    sessionIndex = archivedSessions.findIndex(s => s.id === sessionId);
+    if (sessionIndex === -1) {
+      throw new Error('Session not found');
+    }
+  } else {
+    isActive = true;
+  }
+  
+  // Get the session to update
+  const session = isActive 
+    ? { ...activeSessions[sessionIndex] } 
+    : { ...archivedSessions[sessionIndex] };
+  
+  // Process all messages at once
+  const now = new Date().toISOString();
+  const messageData = messages.map(msg => ({
+    content: msg.content,
+    role: msg.role,
+    timestamp: now,
+    sentiment: msg.role === 'user' ? analyzeSentiment(msg.content) : undefined
+  }));
+  
+  // Update session
+  session.messages = [...session.messages, ...messageData];
+  session.lastActiveAt = now;
+  
+  // Update title if needed
+  if (session.title === 'New Conversation') {
+    const firstUserMsg = messages.find(m => m.role === 'user');
+    if (firstUserMsg) {
+      const words = firstUserMsg.content.split(' ');
+      session.title = words.slice(0, 4).join(' ') + (words.length > 4 ? '...' : '');
+    }
+  }
+  
+  // Update in Firestore with a single write
+  const batch = writeBatch(db);
+  
+  if (isActive) {
+    const updatedSessions = [...activeSessions];
+    updatedSessions[sessionIndex] = session;
+    
+    batch.update(sessionsRef, {
+      activeSessions: updatedSessions,
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    const updatedSessions = [...archivedSessions];
+    updatedSessions[sessionIndex] = session;
+    
+    batch.update(sessionsRef, {
+      archivedSessions: updatedSessions,
+      updatedAt: serverTimestamp()
+    });
+  }
+  
+  await batch.commit();
+  sessionCache.delete(`user-sessions-${userId}`);
+};
+
+/**
+ * Optimized version of processChatWithSession that reduces Firestore operations
+ */
+export const processOptimizedChat = async (userId: string, sessionId: string, message: string) => {
+  try {
+    if (!userId || !sessionId || !message || typeof message !== 'string') {
+      throw new Error('Invalid input for processing chat message');
+    }
+
+    // Fetch user assessment data and messages concurrently
+    const [assessmentResult, chatHistory] = await Promise.all([
+      getLatestAssessment(userId),
+      getSessionMessages(userId, sessionId)
+    ]);
+    
+    const mbtiType = assessmentResult.data?.mbti_type;
+    const aiPreference = assessmentResult.data?.ai_preference;
+    
+    // Analyze sentiment of user message
+    const sentiment = analyzeSentiment(message);
+    
+    // Save user message to session and wait for AI response
+    const userMessage = {
+      content: message,
+      role: 'user' as const,
+      sentiment,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Generate AI response with caching
+    const aiResponse = await getCachedOrGenerateResponse(
+      message,
+      [...chatHistory, userMessage], // Include the new message in context
+      generateChatResponse,
+      mbtiType,
+      aiPreference
+    );
+    
+    if (!aiResponse || !aiResponse.response) {
+      throw new Error('Failed to generate chat response');
+    }
+    
+    // Create AI response message
+    const aiMessage = {
+      content: aiResponse.response,
+      role: 'assistant' as const,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Check for learning intent to see if we need recommendations
+    const intent = await determineLearningIntent(message);
+    
+    let recommendationsMessage = null;
+    let recommendationsItems: Array<{
+      id: string;
+      title: string;
+      content: string;
+      type: 'post' | 'tutorial';
+    }> = [];
+    
+    if (intent === "learning") {
+      try {
+        const searchPhrase = await extractKeyword(message);
+        const contentItems = await fetchCombinedContent(searchPhrase);
+        
+        if (contentItems.length) {
+          // Limit to 3 recommendations
+          recommendationsItems = contentItems.slice(0, 3);
+          
+          const recommendationsText = `Here are some helpful resources:\n` +
+            recommendationsItems.map(item => `• ${item.title}`).join('\n');
+            
+          recommendationsMessage = {
+            content: recommendationsText,
+            role: 'assistant' as const,
+            timestamp: new Date().toISOString()
+          };
+        }
+      } catch (error) {
+        console.error('Error getting recommendations:', error);
+      }
+    }
+    
+    // Batch save messages to reduce Firestore operations
+    const messagesToAdd = recommendationsMessage 
+      ? [userMessage, aiMessage, recommendationsMessage] 
+      : [userMessage, aiMessage];
+    
+    // Use batch processing for saving messages
+    await addMultipleMessagesToSession(userId, sessionId, messagesToAdd);
+    
+    // Update last active time
+    updateLastActiveTime(sessionId);
+    
+    // Run maintenance tasks in the background
+    setTimeout(() => {
+      compactSessionData(userId).catch(err => 
+        console.error('Error compacting session data:', err)
+      );
+      archiveOldSessions(userId).catch(err => 
+        console.error('Error archiving old sessions:', err)
+      );
+    }, 5000);
+    
+    const firstResponse = {
+      response: aiResponse.response,
+      sentiment,
+      userContext: { mbtiType, aiPreference },
+      recommendations: []
+    };
+    
+    // If we have recommendations, return them as a second response
+    if (recommendationsMessage) {
+      return [firstResponse, {
+        response: recommendationsMessage.content,
+        sentiment,
+        userContext: { mbtiType, aiPreference },
+        recommendations: recommendationsItems
+      }];
+    }
+    
+    return firstResponse;
+  } catch (error) {
+    console.error('Error processing chat message:', error);
+    throw error;
+  }
+};
+
+// Export the optimized function while keeping the original for compatibility
+export { processOptimizedChat as optimizedProcessChat };
+
+/**
+ * Run maintenance tasks in the background for a user
+ */
+export const runChatMaintenance = async (userId: string): Promise<void> => {
+  if (!userId) return;
+  
+  try {
+    // Run tasks sequentially to avoid conflicts
+    await compactSessionData(userId);
+    await archiveOldSessions(userId);
+    console.log('Chat maintenance completed for user:', userId);
+  } catch (error) {
+    console.error('Error running chat maintenance:', error);
+  }
+};
+
+// Fix the missing updateSessionWithMessage function
+/**
+ * Update a session with a new message
+ */
+const updateSessionWithMessage = async (userId: string, sessionId: string, messageData: ChatMessage): Promise<void> => {
+  const sessionsRef = doc(db, 'chatSessions', userId);
+  const sessionsDoc = await getDoc(sessionsRef);
+  
+  if (!sessionsDoc.exists()) {
+    throw new Error('Chat sessions not found');
+  }
+  
+  const data = sessionsDoc.data() as ChatSessionsDoc;
+  const now = new Date().toISOString();
+  
+  // Find the session to update
+  let sessionFound = false;
+  const activeSessions = [...data.activeSessions];
+  
+  // First check active sessions
+  for (let i = 0; i < activeSessions.length; i++) {
+    if (activeSessions[i].id === sessionId) {
+      // Update the session
+      activeSessions[i].messages.push(messageData);
+      activeSessions[i].lastActiveAt = now;
+      
+      // Update session title based on first user message if needed
+      if (activeSessions[i].title === 'New Conversation' && messageData.role === 'user') {
+        // Use first few words of message as title
+        const words = messageData.content.split(' ');
+        const title = words.slice(0, 4).join(' ') + (words.length > 4 ? '...' : '');
+        activeSessions[i].title = title;
+      }
+      
+      await updateDoc(sessionsRef, {
+        activeSessions,
+        updatedAt: serverTimestamp()
+      });
+      
+      sessionFound = true;
+      break;
+    }
+  }
+  
+  if (!sessionFound) {
+    // Check archived sessions
+    const archivedSessions = [...data.archivedSessions];
+    
+    for (let i = 0; i < archivedSessions.length; i++) {
+      if (archivedSessions[i].id === sessionId) {
+        // Update the session
+        archivedSessions[i].messages.push(messageData);
+        archivedSessions[i].lastActiveAt = now;
+        
+        // Similar title update logic for archived sessions
+        if (archivedSessions[i].title === 'New Conversation' && messageData.role === 'user') {
+          const words = messageData.content.split(' ');
+          const title = words.slice(0, 4).join(' ') + (words.length > 4 ? '...' : '');
+          archivedSessions[i].title = title;
+        }
+        
+        // Move from archived to active sessions
+        const sessionToActivate = archivedSessions.splice(i, 1)[0];
+        activeSessions.unshift(sessionToActivate);
+        
+        // Update in Firestore
+        await updateDoc(sessionsRef, {
+          activeSessions,
+          archivedSessions,
+          currentSessionId: sessionId,
+          updatedAt: serverTimestamp()
+        });
+        
+        sessionFound = true;
+        break;
+      }
+    }
+  }
+  
+  if (!sessionFound) {
+    throw new Error('Session not found');
+  }
+  
+  // Invalidate cache
+  sessionCache.delete(`user-sessions-${userId}`);
 };

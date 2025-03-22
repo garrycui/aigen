@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { Badge, BADGES } from '@shared/lib/dashboard/badges';
+import { Badge, DisplayBadge, BADGE_CATEGORIES, prepareBadgesForDisplay, groupBadgesByCategory } from '@shared/lib/dashboard/badges';
 
 interface BadgesModalProps {
   isOpen: boolean;
@@ -32,27 +32,9 @@ const BadgesModal: React.FC<BadgesModalProps> = ({ isOpen, onClose, badges }) =>
 
   if (!isOpen) return null;
 
-  const earnedBadgeIds = new Set(badges.map(b => b.id));
-  const allBadges = Object.values(BADGES).map(badge => ({
-    ...badge,
-    earned: earnedBadgeIds.has(badge.id)
-  }));
-
-  const categories = {
-    achievement: 'Achievement Badges',
-    learning: 'Learning Badges',
-    community: 'Community Badges',
-    milestone: 'Milestone Badges'
-  };
-
-  // Group all badges by category
-  const groupedBadges = allBadges.reduce((acc, badge) => {
-    if (!acc[badge.category]) {
-      acc[badge.category] = [];
-    }
-    acc[badge.category].push(badge);
-    return acc;
-  }, {} as Record<string, Array<typeof allBadges[0]>>);
+  // Use shared business logic from badges.ts
+  const allBadgesWithEarnedStatus = prepareBadgesForDisplay(badges);
+  const groupedBadges = groupBadgesByCategory(allBadgesWithEarnedStatus);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -84,7 +66,7 @@ const BadgesModal: React.FC<BadgesModalProps> = ({ isOpen, onClose, badges }) =>
             <h2 className="text-2xl font-bold text-gray-900 mb-6">Your Badges</h2>
             
             <div className="space-y-6">
-              {Object.entries(categories).map(([category, title]) => (
+              {Object.entries(BADGE_CATEGORIES).map(([category, title]) => (
                 <div key={category}>
                   <h3 className="text-lg font-medium text-gray-900 mb-3">{title}</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">

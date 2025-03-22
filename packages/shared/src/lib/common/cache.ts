@@ -4,6 +4,8 @@ import {
   getDocs, query, orderBy, onSnapshot, Unsubscribe 
 } from 'firebase/firestore';
 
+// ===== CONSTANTS AND INTERFACES =====
+
 // Response caching constants
 export const RESPONSE_CACHE_TTL = 3600000; // 1 hour TTL for common responses
 
@@ -12,6 +14,21 @@ interface CachedAIResponse {
   response: string;
   timestamp: number;
 }
+
+// Define subscription fields to be monitored
+export const SUBSCRIPTION_FIELDS = [
+  'subscriptionStatus',
+  'subscriptionPlan',
+  'subscriptionStart',
+  'subscriptionEnd',
+  'isTrialing',
+  'cancelAtPeriodEnd',
+  'trialEndsAt',
+  'stripeCustomerId',
+  'stripeSubscriptionId'
+];
+
+// ===== CORE CACHE IMPLEMENTATION =====
 
 /**
  * A generic in-memory cache implementation with Time-To-Live (TTL) support
@@ -67,13 +84,18 @@ export class Cache<T> {
       return value;
     }
     
+    // Handle Date objects specially
+    if (value instanceof Date) {
+      return new Date(value.getTime()) as unknown as T;
+    }
+    
+    // For arrays, map each item through cloneValue recursively
+    if (Array.isArray(value)) {
+      return value.map(item => this.cloneValue(item)) as unknown as T;
+    }
+    
+    // For regular objects, use JSON stringify/parse for deep cloning
     try {
-      // Handle Date objects specially
-      if (value instanceof Date) {
-        return new Date(value.getTime()) as unknown as T;
-      }
-      
-      // For regular objects, use JSON stringify/parse for deep cloning
       return JSON.parse(JSON.stringify(value));
     } catch (err) {
       console.warn('Failed to clone cached value, using original reference', err);
@@ -208,25 +230,119 @@ export class Cache<T> {
   }
 }
 
+// ===== CACHE INSTANCES =====
+
 // Create and export default cache instances with different TTLs
 export const userCache = new Cache<any>(10 * 60 * 1000, 200);     // 10 minutes
 export const tutorialCache = new Cache<any>(30 * 60 * 1000, 100); // 30 minutes
-export const forumCache = new Cache<any>(5 * 60 * 1000, 50);     // 5 minutes
-export const postCache = new Cache<any>(2 * 60 * 1000, 50);      // 2 minutes
-export const sessionCache = new Cache<any>(5 * 60 * 1000, 20);   // 5 minutes
+export const forumCache = new Cache<any>(5 * 60 * 1000, 50);      // 5 minutes
+export const postCache = new Cache<any>(2 * 60 * 1000, 50);       // 2 minutes
+export const sessionCache = new Cache<any>(5 * 60 * 1000, 20);    // 5 minutes
 export const assessmentCache = new Cache<any>(60 * 60 * 1000, 10); // 1 hour - longer TTL for stable assessment data
 export const responseCache = new Cache<CachedAIResponse>(RESPONSE_CACHE_TTL, 500); // AI response cache
 export const improvementCache = new Cache<number>(5 * 60 * 1000, 100); // 5 minutes TTL for improvement calculations
 
-// Helper function to create a user cache key
-export const getUserCacheKey = (userId: string) => `user-${userId}`;
+// ===== UTILITY FUNCTIONS =====
 
-// Function to invalidate user cache
-export const invalidateUserCache = (userId?: string) => {
+/**
+ * Create a deep clone of a value to prevent reference issues
+ * This is a utility function for external use that follows the same logic as Cache.cloneValue
+ * @param value Value to clone
+ * @returns Cloned value
+ */
+export const cloneValue = <T>(value: T): T => {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  
+  // Handle Date objects specially
+  if (value instanceof Date) {
+    return new Date(value.getTime()) as unknown as T;
+  }
+  
+  // For arrays, map each item through cloneValue
+  if (Array.isArray(value)) {
+    return value.map(item => cloneValue(item)) as unknown as T;
+  }
+  
+  // For regular objects, use JSON stringify/parse for deep cloning
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (err) {
+    console.warn('Failed to clone value, using original reference', err);
+    return value;
+  }
+};
+
+// Add this function to ensure atomic cache updates
+export const updateCachedUser = (userId: string, updateFunction: (user: any) => any) => {
+  const cacheKey = getUserCacheKey(userId);
+  const cachedUser = userCache.get(cacheKey);
+  
+  if (cachedUser) {
+    // Create a deep clone, apply updates, and set in cache
+    const updatedUser = updateFunction(cloneValue(cachedUser));
+    userCache.set(cacheKey, updatedUser);
+    
+    // Notify listeners about the updated user data
+    notifyUserDataUpdated(userId, updatedUser);
+    
+    return updatedUser;
+  }
+  
+  return null;
+};
+
+// ===== USER CACHE FUNCTIONS =====
+
+/**
+ * Generate a user cache key
+ * @param userId User ID
+ * @returns Formatted cache key
+ */
+export const getUserCacheKey = (userId: string): string => `user-${userId}`;
+
+/**
+ * Generate a user profile cache key
+ * @param userId User ID
+ * @returns Formatted cache key
+ */
+export const getUserProfileCacheKey = (userId: string): string => `user-profile-${userId}`;
+
+/**
+ * Generate a user subcollection document cache key
+ * @param userId User ID
+ * @param subcollection Subcollection name
+ * @param docId Document ID
+ * @returns Formatted cache key
+ */
+export const getUserSubcollectionDocCacheKey = (
+  userId: string, 
+  subcollection: string, 
+  docId: string
+): string => `user-${userId}-${subcollection}-${docId}`;
+
+/**
+ * Generate a user subcollection list cache key
+ * @param userId User ID
+ * @param subcollection Subcollection name
+ * @returns Formatted cache key
+ */
+export const getUserSubcollectionListCacheKey = (
+  userId: string, 
+  subcollection: string
+): string => `user-${userId}-${subcollection}-list`;
+
+/**
+ * Invalidate user cache entries
+ * @param userId Optional user ID (if not provided, invalidates all user caches)
+ * @returns True if any entries were invalidated
+ */
+export const invalidateUserCache = (userId?: string): boolean => {
   if (userId) {
     // Clear specific user cache entries
     userCache.delete(getUserCacheKey(userId));
-    userCache.delete(`user-profile-${userId}`);
+    userCache.delete(getUserProfileCacheKey(userId));
     
     // After invalidating, fetch fresh data and update listeners
     getUser(userId).then(freshUserData => {
@@ -249,18 +365,189 @@ export const invalidateUserCache = (userId?: string) => {
   return userCacheKeys.length > 0;
 };
 
-// Define subscription fields to be monitored
-export const SUBSCRIPTION_FIELDS = [
-  'subscriptionStatus',
-  'subscriptionPlan',
-  'subscriptionStart',
-  'subscriptionEnd',
-  'isTrialing',
-  'cancelAtPeriodEnd',
-  'trialEndsAt',
-  'stripeCustomerId',
-  'stripeSubscriptionId'
-];
+/**
+ * Invalidate related user cache entries
+ * @param userId User ID
+ */
+export const invalidateRelatedUserCacheEntries = (userId: string): void => {
+  // Find and invalidate any cache entries that might depend on subscription data
+  const relatedKeys = userCache.keys().filter(key => 
+    key.startsWith(`user-${userId}-`) && 
+    !key.endsWith('-list') // Don't invalidate collection lists
+  );
+  
+  relatedKeys.forEach(key => userCache.delete(key));
+  
+  // Also invalidate the main user cache key
+  userCache.delete(getUserCacheKey(userId));
+};
+
+// ===== POST AND FORUM CACHE FUNCTIONS =====
+
+/**
+ * Generate a cache key for forum posts based on filter criteria
+ * @param searchQuery Optional search query
+ * @param sortBy Sort method
+ * @param page Page number
+ * @param lastVisibleId Optional last visible post ID for cursor-based pagination
+ * @returns Cache key string
+ */
+export const getForumCacheKey = (searchQuery: string, sortBy: string, page: number, lastVisibleId?: string): string => {
+  if (searchQuery) {
+    return `search-${searchQuery.replace(/\s+/g, '-')}-${sortBy}-page${page}`;
+  }
+  
+  return lastVisibleId 
+    ? `posts-${sortBy}-after-${lastVisibleId}` 
+    : `posts-${sortBy}-page${page}`;
+};
+
+/**
+ * Generate a cache key for a single post
+ * @param postId Post ID
+ * @returns Cache key string
+ */
+export const getPostCacheKey = (postId: string): string => `post-${postId}`;
+
+/**
+ * Clear forum cache for specific criteria or all forum cache entries
+ * @param searchQuery Optional search query
+ * @param sortBy Optional sort method
+ * @param page Optional page number
+ * @returns Number of cache entries invalidated or true if single entry deleted
+ */
+export const clearForumCache = (searchQuery?: string, sortBy?: string, page?: number): boolean | number => {
+  if (searchQuery && sortBy !== undefined && page !== undefined) {
+    const key = getForumCacheKey(searchQuery, sortBy, page);
+    return forumCache.delete(key);
+  }
+  return invalidateForumCache();
+};
+
+/**
+ * Invalidates forum cache entries
+ * @returns Number of cache entries invalidated
+ */
+export const invalidateForumCache = (): number => {
+  const keysToDelete = forumCache.keys()
+    .filter(key => key.startsWith('posts-') || key.startsWith('search-'));
+  
+  keysToDelete.forEach(key => forumCache.delete(key));
+  
+  return keysToDelete.length;
+};
+
+/**
+ * Invalidates post cache for a specific post
+ * @param postId The post ID to invalidate
+ */
+export const invalidatePostCache = (postId: string): void => {
+  postCache.delete(getPostCacheKey(postId));
+};
+
+/**
+ * Invalidates both post and forum caches
+ * @param postId Optional specific post ID to invalidate
+ * @returns Number of forum cache entries invalidated
+ */
+export const invalidatePostAndForumCaches = (postId?: string): number => {
+  if (postId) {
+    invalidatePostCache(postId);
+  }
+  return invalidateForumCache();
+};
+
+// ===== TUTORIAL CACHE FUNCTIONS =====
+
+/**
+ * Generate a tutorial cache key
+ * @param tutorialId Tutorial ID
+ * @returns Formatted cache key
+ */
+export const getTutorialCacheKey = (tutorialId: string): string => `tutorial-${tutorialId}`;
+
+/**
+ * Generate a combined tutorials list cache key
+ * @returns Formatted cache key
+ */
+export const getCombinedTutorialsCacheKey = (): string => 'combined-content-tutorials';
+
+/**
+ * Invalidates tutorial cache entries
+ * @returns Number of cache entries invalidated
+ */
+export const invalidateTutorialCache = (): number => {
+  // Get all keys from tutorialCache and delete any that start with 'tutorials-'
+  const keysToDelete = tutorialCache.keys()
+    .filter(key => key.startsWith('tutorials-') || key === getCombinedTutorialsCacheKey());
+  
+  keysToDelete.forEach(key => tutorialCache.delete(key));
+  
+  return keysToDelete.length;
+};
+
+// ===== ASSESSMENT CACHE FUNCTIONS =====
+
+/**
+ * Generate an assessment cache key
+ * @param userId User ID
+ * @returns Formatted cache key
+ */
+export const getAssessmentCacheKey = (userId: string): string => `latest-assessment-${userId}`;
+
+/**
+ * Invalidates the assessment cache for a user
+ * @param userId User ID
+ */
+export const invalidateAssessmentCache = (userId: string): void => {
+  assessmentCache.delete(getAssessmentCacheKey(userId));
+};
+
+// ===== IMPROVEMENT CACHE FUNCTIONS =====
+
+/**
+ * Generate an improvement cache key
+ * @param userId User ID
+ * @returns Formatted cache key
+ */
+export const getImprovementCacheKey = (userId: string): string => `monthly-improvement-${userId}`;
+
+/**
+ * Invalidate improvement cache for a user
+ * @param userId Optional User ID (if not provided, invalidates all improvement caches)
+ */
+export const invalidateImprovementCache = (userId?: string): void => {
+  if (userId) {
+    improvementCache.delete(getImprovementCacheKey(userId));
+  } else {
+    // Clear all improvement cache entries if no userId provided
+    const improvementCacheKeys = improvementCache.keys();
+    improvementCacheKeys.forEach(key => improvementCache.delete(key));
+  }
+};
+
+// ===== CACHE MAINTENANCE =====
+
+// Set up automatic cache cleanup every 5 minutes
+setInterval(() => {
+  const userRemoved = userCache.cleanup();
+  const tutorialRemoved = tutorialCache.cleanup();
+  const forumRemoved = forumCache.cleanup();
+  const postRemoved = postCache.cleanup();
+  const sessionRemoved = sessionCache.cleanup();
+  const assessmentRemoved = assessmentCache.cleanup();
+  const improvementRemoved = improvementCache.cleanup();
+  
+  const totalRemoved = userRemoved + tutorialRemoved + forumRemoved + 
+                       postRemoved + sessionRemoved + assessmentRemoved +
+                       improvementRemoved;
+  
+  if (totalRemoved > 0) {
+    console.log(`Auto-cleanup removed ${totalRemoved} expired cache entries`);
+  }
+}, 5 * 60 * 1000);
+
+// ===== SUBSCRIPTION MANAGEMENT =====
 
 // Store active subscription listeners
 const activeSubscriptionListeners = new Map<string, {
@@ -437,7 +724,7 @@ export const cleanupAllSubscriptionListeners = (): void => {
   activeSubscriptionListeners.clear();
 };
 
-// ===== User Data Service =====
+// ===== USER DATA SERVICE =====
 
 /**
  * Get user data from cache or Firestore
@@ -609,7 +896,7 @@ export const updateUserField = async (userId: string, field: string, value: any)
   return updateUser(userId, updateData);
 };
 
-// ===== User Subcollection Data Service =====
+// ===== USER SUBCOLLECTION DATA SERVICE =====
 
 /**
  * Get a document from a user's subcollection
@@ -630,7 +917,7 @@ export const getUserSubcollectionDoc = async (
     return {};
   }
   
-  const cacheKey = `user-${userId}-${subcollection}-${docId}`;
+  const cacheKey = getUserSubcollectionDocCacheKey(userId, subcollection, docId);
   
   return userCache.getOrSet(cacheKey, async () => {
     try {
@@ -694,7 +981,7 @@ export const updateUserSubcollectionDoc = async (
     }
     
     // Invalidate specific cache entry
-    userCache.delete(`user-${userId}-${subcollection}-${docId}`);
+    userCache.delete(getUserSubcollectionDocCacheKey(userId, subcollection, docId));
     
     // Return updated document data
     return getUserSubcollectionDoc(userId, subcollection, docId);
@@ -718,7 +1005,7 @@ export const getUserSubcollection = async (
 ) => {
   if (!userId) return [];
   
-  const cacheKey = `user-${userId}-${subcollection}-list`;
+  const cacheKey = getUserSubcollectionListCacheKey(userId, subcollection);
   
   return userCache.getOrSet(cacheKey, async () => {
     try {
@@ -784,162 +1071,7 @@ export const getUserMoodEntries = async (userId: string, forceRefresh = false) =
   return records;
 };
 
-/**
- * Invalidate related user cache entries
- * @param userId User ID
- */
-export const invalidateRelatedUserCacheEntries = (userId: string): void => {
-  // Find and invalidate any cache entries that might depend on subscription data
-  const relatedKeys = userCache.keys().filter(key => 
-    key.startsWith(`user-${userId}-`) && 
-    !key.endsWith('-list') // Don't invalidate collection lists
-  );
-  
-  relatedKeys.forEach(key => userCache.delete(key));
-  
-  // Also invalidate the main user cache key
-  userCache.delete(getUserCacheKey(userId));
-};
-
-// Set up automatic cache cleanup every 5 minutes
-setInterval(() => {
-  const userRemoved = userCache.cleanup();
-  const tutorialRemoved = tutorialCache.cleanup();
-  const forumRemoved = forumCache.cleanup();
-  const postRemoved = postCache.cleanup();
-  const sessionRemoved = sessionCache.cleanup();
-  const assessmentRemoved = assessmentCache.cleanup();
-  const improvementRemoved = improvementCache.cleanup();
-  
-  const totalRemoved = userRemoved + tutorialRemoved + forumRemoved + 
-                       postRemoved + sessionRemoved + assessmentRemoved +
-                       improvementRemoved;
-  
-  if (totalRemoved > 0) {
-    console.log(`Auto-cleanup removed ${totalRemoved} expired cache entries`);
-  }
-}, 5 * 60 * 1000);
-
-// ===== Assessment Data Service =====
-
-/**
- * Invalidates the assessment cache for a user
- * @param userId User ID
- */
-export const invalidateAssessmentCache = (userId: string): void => {
-  assessmentCache.delete(`latest-assessment-${userId}`);
-};
-
-/**
- * Create a deep clone of a value to prevent reference issues
- * @param value Value to clone
- * @returns Cloned value
- */
-export const cloneValue = <T>(value: T): T => {
-  if (value === null || typeof value !== 'object') {
-    return value;
-  }
-  
-  // Handle Date objects specially
-  if (value instanceof Date) {
-    return new Date(value.getTime()) as unknown as T;
-  }
-  
-  // For arrays, map each item through cloneValue
-  if (Array.isArray(value)) {
-    return value.map(item => cloneValue(item)) as unknown as T;
-  }
-  
-  // For regular objects, use JSON stringify/parse for deep cloning
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (err) {
-    console.warn('Failed to clone value, using original reference', err);
-    return value;
-  }
-};
-
-// Add this function to ensure atomic cache updates
-export const updateCachedUser = (userId: string, updateFunction: (user: any) => any) => {
-  const cacheKey = getUserCacheKey(userId);
-  const cachedUser = userCache.get(cacheKey);
-  
-  if (cachedUser) {
-    // Create a deep clone, apply updates, and set in cache
-    const updatedUser = updateFunction(cloneValue(cachedUser));
-    userCache.set(cacheKey, updatedUser);
-    
-    // Notify listeners about the updated user data
-    notifyUserDataUpdated(userId, updatedUser);
-    
-    return updatedUser;
-  }
-  
-  return null;
-};
-
-// Add this function to invalidate improvement cache for a user
-export const invalidateImprovementCache = (userId?: string): void => {
-  if (userId) {
-    improvementCache.delete(`monthly-improvement-${userId}`);
-  } else {
-    // Clear all improvement cache entries if no userId provided
-    const improvementCacheKeys = improvementCache.keys();
-    improvementCacheKeys.forEach(key => improvementCache.delete(key));
-  }
-};
-
-// ===== Forum Cache Functions =====
-
-/**
- * Invalidates forum cache entries
- * @returns Number of cache entries invalidated
- */
-export const invalidateForumCache = () => {
-  // Get all keys from forumCache and delete any that start with "posts-" or "search-"
-  const keysToDelete = forumCache.keys()
-    .filter(key => key.startsWith('posts-') || key.startsWith('search-'));
-  
-  keysToDelete.forEach(key => forumCache.delete(key));
-  
-  return keysToDelete.length;
-};
-
-/**
- * Invalidates post cache for a specific post
- * @param postId The post ID to invalidate
- */
-export const invalidatePostCache = (postId: string) => {
-  postCache.delete(`post-${postId}`);
-};
-
-/**
- * Invalidates both post and forum caches
- * @param postId Optional specific post ID to invalidate
- * @returns Number of forum cache entries invalidated
- */
-export const invalidatePostAndForumCaches = (postId?: string) => {
-  if (postId) {
-    invalidatePostCache(postId);
-  }
-  return invalidateForumCache();
-};
-
-// ===== Tutorial Cache Functions =====
-
-/**
- * Invalidates tutorial cache entries
- * @returns Number of cache entries invalidated
- */
-export const invalidateTutorialCache = (): number => {
-  // Get all keys from tutorialCache and delete any that start with 'tutorials-'
-  const keysToDelete = tutorialCache.keys()
-    .filter(key => key.startsWith('tutorials-') || key === 'combined-content-tutorials');
-  
-  keysToDelete.forEach(key => tutorialCache.delete(key));
-  
-  return keysToDelete.length;
-};
+// ===== USER UPDATE LISTENERS =====
 
 // User update listeners
 const userUpdateListeners = new Map<string, Set<(userData: Record<string, any>) => void>>();

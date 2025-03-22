@@ -24,6 +24,6 @@
       "@context/*": ["src/context/*"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "../shared/src/lib/dashboard/learningGoals.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

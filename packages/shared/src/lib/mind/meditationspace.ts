@@ -137,185 +137,6 @@ export const splitGuidanceIntoLines = (guidance: string): string[] => {
   return lines;
 };
 
-// Text-to-speech functionality
-export class MeditationSpeech {
-  private speech: SpeechSynthesisUtterance | null = null;
-  private lines: string[] = [];
-  private currentLineIndex = 0;
-  private isPlaying = false;
-  private onLineChangeCallback: ((line: string, index: number) => void) | null = null;
-  private onCompletedCallback: (() => void) | null = null;
-  
-  constructor(voice?: SpeechSynthesisVoice) {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      this.speech = new SpeechSynthesisUtterance();
-      this.speech.rate = 0.9; // Slightly slower than normal
-      this.speech.pitch = 0.9; // Slightly deeper voice
-      this.speech.volume = 1.0;
-      
-      // Set a calm voice if specified, otherwise use default
-      if (voice) {
-        this.speech.voice = voice;
-      } else {
-        // Try to find a soothing voice
-        setTimeout(() => {
-          const voices = window.speechSynthesis.getVoices();
-          const preferredVoices = ['Samantha', 'Google UK English Female', 'Daniel', 'Google US English'];
-          
-          for (const preferredVoice of preferredVoices) {
-            const voice = voices.find(v => v.name.includes(preferredVoice));
-            if (voice) {
-              if (this.speech) this.speech.voice = voice;
-              break;
-            }
-          }
-        }, 100);
-      }
-      
-      // Set up event handlers
-      this.speech.onend = this.handleSpeechEnd.bind(this);
-    }
-  }
-  
-  /**
-   * Set the text to be read
-   */
-  setText(text: string): void {
-    this.lines = splitGuidanceIntoLines(text);
-    this.currentLineIndex = 0;
-  }
-  
-  /**
-   * Set lines directly
-   */
-  setLines(lines: string[]): void {
-    this.lines = lines;
-    this.currentLineIndex = 0;
-  }
-  
-  /**
-   * Set callback for when line changes
-   */
-  onLineChange(callback: (line: string, index: number) => void): void {
-    this.onLineChangeCallback = callback;
-  }
-  
-  /**
-   * Set callback for when all lines complete
-   */
-  onCompleted(callback: () => void): void {
-    this.onCompletedCallback = callback;
-  }
-  
-  /**
-   * Start or resume speaking
-   */
-  start(): void {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window) || !this.speech) {
-      console.error('Speech synthesis not supported');
-      return;
-    }
-    
-    if (this.isPlaying) return;
-    this.isPlaying = true;
-    
-    if (this.lines.length <= 0) return;
-    
-    this.speakCurrentLine();
-  }
-  
-  /**
-   * Pause speaking
-   */
-  pause(): void {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      this.isPlaying = false;
-    }
-  }
-  
-  /**
-   * Stop speaking and reset
-   */
-  stop(): void {
-    this.pause();
-    this.currentLineIndex = 0;
-  }
-  
-  /**
-   * Handle when a speech segment ends
-   */
-  private handleSpeechEnd(): void {
-    // If we have more lines, continue after a pause
-    if (this.isPlaying && this.currentLineIndex < this.lines.length - 1) {
-      this.currentLineIndex++;
-      
-      // Notify about line change
-      if (this.onLineChangeCallback) {
-        this.onLineChangeCallback(this.lines[this.currentLineIndex], this.currentLineIndex);
-      }
-      
-      // Add a pause between lines for a more natural meditation flow
-      setTimeout(() => {
-        if (this.isPlaying) {
-          this.speakCurrentLine();
-        }
-      }, SPEECH_PAUSE_DURATION);
-    } else {
-      // We've reached the end
-      if (this.onCompletedCallback) {
-        this.onCompletedCallback();
-      }
-    }
-  }
-  
-  /**
-   * Speak the current line with proper pause handling
-   */
-  private speakCurrentLine(): void {
-    if (!this.speech || this.currentLineIndex >= this.lines.length) return;
-    
-    const currentLine = this.lines[this.currentLineIndex];
-    
-    // Special handling for pause markers
-    if (currentLine === '[pause]') {
-      // For pause markers, just wait and then move to the next line
-      setTimeout(() => {
-        this.handleSpeechEnd();
-      }, SPEECH_PAUSE_DURATION * 2); // Double the normal pause for explicit markers
-      
-      return;
-    }
-    
-    // Normal speech for regular lines
-    this.speech.text = currentLine;
-    
-    // Notify about initial line if it's the first one
-    if (this.currentLineIndex === 0 && this.onLineChangeCallback) {
-      this.onLineChangeCallback(currentLine, 0);
-    }
-    
-    window.speechSynthesis.speak(this.speech);
-  }
-  
-  /**
-   * Get available voices
-   */
-  static getVoices(): SpeechSynthesisVoice[] {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      return window.speechSynthesis.getVoices();
-    }
-    return [];
-  }
-  
-  /**
-   * Check if speech synthesis is supported
-   */
-  static isSupported(): boolean {
-    return typeof window !== 'undefined' && 'speechSynthesis' in window;
-  }
-}
-
 /**
  * Gets the default meditation preferences based on MBTI type
  */
@@ -557,40 +378,18 @@ export const calculateLineTiming = (
 };
 
 /**
- * Create a speech synthesis utterance with meditation-appropriate settings
- */
-export const createMeditationUtterance = (text: string): SpeechSynthesisUtterance => {
-  const utterance = new SpeechSynthesisUtterance(text);
-  
-  // Try to find a calm, soothing voice
-  const voices = window.speechSynthesis.getVoices();
-  const preferredVoices = voices.filter(voice => 
-    voice.name.includes('Female') || 
-    voice.name.includes('Calm') || 
-    voice.name.includes('Samantha') ||
-    voice.name.includes('Moira') ||
-    voice.name.includes('Karen')
-  );
-  
-  if (preferredVoices.length > 0) {
-    utterance.voice = preferredVoices[0];
-  }
-  
-  // Slow down the speech rate for meditation
-  utterance.rate = 0.8;
-  utterance.pitch = 1.0;
-  utterance.volume = 0.8;
-  
-  return utterance;
-};
-
-/**
  * Read meditation text using speech synthesis
  */
 export const speakMeditationLine = (
   line: string, 
   onLineComplete?: () => void
 ): SpeechSynthesisUtterance | null => {
+  // Check if speech synthesis is supported
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    if (onLineComplete) setTimeout(onLineComplete, 1000);
+    return null;
+  }
+
   // If this is a pause marker, don't speak it but still invoke completion
   if (line === '[pause]') {
     if (onLineComplete) {
@@ -603,7 +402,7 @@ export const speakMeditationLine = (
   // Handle normal speech for non-pause lines
   window.speechSynthesis.cancel();
   
-  const utterance = createMeditationUtterance(line);
+  const utterance = createEnhancedMeditationUtterance(line);
   
   if (onLineComplete) {
     utterance.onend = onLineComplete;
@@ -617,6 +416,8 @@ export const speakMeditationLine = (
  * Pause or resume speech synthesis
  */
 export const toggleSpeechSynthesis = (isPaused: boolean): void => {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  
   if (isPaused) {
     window.speechSynthesis.pause();
   } else {
@@ -628,6 +429,7 @@ export const toggleSpeechSynthesis = (isPaused: boolean): void => {
  * Stop any ongoing speech synthesis
  */
 export const stopSpeechSynthesis = (): void => {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
 };
 
@@ -636,7 +438,7 @@ export const stopSpeechSynthesis = (): void => {
  */
 export const initializeSpeechSynthesis = (): boolean => {
   // Ensure the browser supports speech synthesis
-  if (!('speechSynthesis' in window)) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     console.error('Speech synthesis not supported in this browser');
     return false;
   }
@@ -654,54 +456,47 @@ export const initializeSpeechSynthesis = (): boolean => {
   return true;
 };
 
-// Add these new functions to improve speech quality
-
-/**
- * Get premium quality voices from available options
- */
-export const getPremiumVoices = (): SpeechSynthesisVoice[] => {
-  if (!('speechSynthesis' in window)) return [];
-  
-  const allVoices = window.speechSynthesis.getVoices();
-  
-  // Filter for premium/neural/natural voices which typically sound better
-  return allVoices.filter(voice => 
-    voice.name.includes('Neural') ||
-    voice.name.includes('Premium') ||
-    voice.name.includes('Wavenet') ||
-    voice.name.includes('Natural') ||
-    // Include these specific high quality voices
-    voice.name.includes('Samantha') ||
-    voice.name.includes('Daniel') ||
-    voice.name.includes('Moira') ||
-    voice.name.includes('Karen')
-  );
-};
-
 /**
  * Get the best available voice for meditation
  */
 export const getBestMeditationVoice = (): SpeechSynthesisVoice | null => {
-  const premiumVoices = getPremiumVoices();
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
   
-  if (premiumVoices.length > 0) {
-    // Prefer female voices for meditation, they tend to be more soothing
-    const femaleVoices = premiumVoices.filter(voice => 
-      voice.name.includes('Female') || 
-      voice.name.includes('Samantha') || 
-      voice.name.includes('Moira') || 
-      voice.name.includes('Karen')
-    );
-    
-    if (femaleVoices.length > 0) {
-      return femaleVoices[0];
-    }
-    
-    return premiumVoices[0];
-  }
-  
-  // No premium voices available, fall back to any voice
   const allVoices = window.speechSynthesis.getVoices();
+  
+  // First try to find premium female voices
+  const premiumFemaleVoices = allVoices.filter(voice => 
+    (voice.name.toLowerCase().includes('female') || 
+     voice.name.includes('Samantha') || 
+     voice.name.includes('Moira') || 
+     voice.name.includes('Karen')) &&
+    (voice.name.includes('Neural') || 
+     voice.name.includes('Premium') || 
+     voice.name.includes('Wavenet'))
+  );
+  
+  if (premiumFemaleVoices.length > 0) return premiumFemaleVoices[0];
+  
+  // Then try any premium voice
+  const premiumVoices = allVoices.filter(voice => 
+    voice.name.includes('Neural') ||
+    voice.name.includes('Premium') ||
+    voice.name.includes('Wavenet')
+  );
+  
+  if (premiumVoices.length > 0) return premiumVoices[0];
+  
+  // Then try any female voice
+  const femaleVoices = allVoices.filter(voice => 
+    voice.name.toLowerCase().includes('female') || 
+    voice.name.includes('Samantha') || 
+    voice.name.includes('Moira') || 
+    voice.name.includes('Karen')
+  );
+  
+  if (femaleVoices.length > 0) return femaleVoices[0];
+  
+  // Fallback to any available voice
   return allVoices.length > 0 ? allVoices[0] : null;
 };
 
@@ -730,4 +525,558 @@ export const createEnhancedMeditationUtterance = (
   utterance.volume = 0.9;    // Clear but not too loud
   
   return utterance;
+};
+
+// New types for voice management
+export interface MeditationVoiceOptions {
+  preferFemale?: boolean;
+  preferPremium?: boolean;
+}
+
+/**
+ * Loads and filters voices suitable for meditation
+ */
+export const loadMeditationVoices = async (options: MeditationVoiceOptions = {}): Promise<{
+  voices: SpeechSynthesisVoice[];
+  bestVoice: SpeechSynthesisVoice | null;
+  premiumCount: number;
+}> => {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    return { voices: [], bestVoice: null, premiumCount: 0 };
+  }
+
+  // Initialize speech synthesis
+  const synth = window.speechSynthesis;
+  
+  // Try to force voice loading
+  synth.getVoices();
+  
+  // Get available voices with a small delay to ensure loading
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const allVoices = synth.getVoices();
+      
+      if (allVoices.length === 0) {
+        resolve({ voices: [], bestVoice: null, premiumCount: 0 });
+        return;
+      }
+      
+      // Filter for voices suitable for meditation
+      const meditationVoices = allVoices.filter(voice => {
+        const isFemale = voice.name.toLowerCase().includes('female') || 
+                          voice.name.includes('Samantha') || 
+                          voice.name.includes('Moira');
+        const isPremium = voice.name.includes('Neural') || 
+                          voice.name.includes('Premium') || 
+                          voice.name.includes('Wavenet');
+        
+        // Apply filters based on options
+        if (options.preferFemale && options.preferPremium) {
+          return isFemale && isPremium;
+        } else if (options.preferFemale) {
+          return isFemale;
+        } else if (options.preferPremium) {
+          return isPremium;
+        }
+        
+        return isFemale || isPremium || voice.name.includes('Calm');
+      });
+      
+      // Use filtered voices if available, otherwise all voices
+      const voicesToUse = meditationVoices.length > 0 ? meditationVoices : allVoices;
+      
+      // Find the best voice
+      const bestVoice = getBestMeditationVoice();
+      
+      // Count premium voices
+      const premiumCount = voicesToUse.filter(v => 
+        v.name.includes('Neural') || 
+        v.name.includes('Premium') || 
+        v.name.includes('Wavenet')
+      ).length;
+      
+      resolve({
+        voices: voicesToUse,
+        bestVoice,
+        premiumCount
+      });
+    }, 100);
+  });
+};
+
+/**
+ * Meditation session controller for managing guided meditation state
+ */
+export class MeditationSessionController {
+  private lines: string[] = [];
+  private timings: number[] = [];
+  private currentLineIndex: number = -1;
+  private isActive: boolean = false;
+  private currentTimerId: NodeJS.Timeout | null = null;
+  private speechSupported: boolean;
+  private selectedVoice: SpeechSynthesisVoice | null = null;
+  private onLineChangeCallback: ((line: string, index: number) => void) | null = null;
+  private onStateChangeCallback: ((isActive: boolean) => void) | null = null;
+  private onCompletionCallback: (() => void) | null = null;
+  
+  constructor() {
+    this.speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  }
+  
+  /**
+   * Initialize the session with meditation content
+   */
+  async initialize(mbtiType: string, focus: string, durationMinutes: number): Promise<void> {
+    try {
+      // Generate meditation content
+      this.lines = await generateMeditationContent(mbtiType, focus, durationMinutes);
+      
+      // Calculate timing for each line
+      this.timings = calculateLineTiming(this.lines, durationMinutes);
+      
+      this.currentLineIndex = -1;
+      this.isActive = false;
+      
+      if (this.currentTimerId) {
+        clearTimeout(this.currentTimerId);
+        this.currentTimerId = null;
+      }
+      
+      return;
+    } catch (error) {
+      console.error('Error initializing meditation session:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Start the meditation session
+   */
+  start(): void {
+    if (this.lines.length === 0) {
+      console.error('No meditation content available to start session');
+      return;
+    }
+    
+    this.isActive = true;
+    this.currentLineIndex = 0;
+    
+    if (this.onStateChangeCallback) {
+      this.onStateChangeCallback(true);
+    }
+    
+    if (this.onLineChangeCallback) {
+      this.onLineChangeCallback(this.lines[0], 0);
+    }
+    
+    // Start speaking the first line
+    if (this.speechSupported) {
+      this.speakCurrentLine(() => {
+        this.scheduleNextLine();
+      });
+    } else {
+      this.scheduleNextLine();
+    }
+  }
+  
+  /**
+   * Pause the meditation session
+   */
+  pause(): void {
+    if (!this.isActive) return;
+    
+    this.isActive = false;
+    
+    if (this.currentTimerId) {
+      clearTimeout(this.currentTimerId);
+      this.currentTimerId = null;
+    }
+    
+    if (this.speechSupported) {
+      toggleSpeechSynthesis(true);
+    }
+    
+    if (this.onStateChangeCallback) {
+      this.onStateChangeCallback(false);
+    }
+  }
+  
+  /**
+   * Resume the meditation session
+   */
+  resume(): void {
+    if (this.isActive) return;
+    
+    this.isActive = true;
+    
+    if (this.speechSupported) {
+      toggleSpeechSynthesis(false);
+    }
+    
+    if (this.currentLineIndex < this.lines.length - 1) {
+      this.scheduleNextLine();
+    }
+    
+    if (this.onStateChangeCallback) {
+      this.onStateChangeCallback(true);
+    }
+  }
+  
+  /**
+   * Stop the meditation session
+   */
+  stop(): void {
+    this.isActive = false;
+    
+    if (this.currentTimerId) {
+      clearTimeout(this.currentTimerId);
+      this.currentTimerId = null;
+    }
+    
+    if (this.speechSupported) {
+      stopSpeechSynthesis();
+    }
+    
+    this.currentLineIndex = -1;
+    
+    if (this.onStateChangeCallback) {
+      this.onStateChangeCallback(false);
+    }
+  }
+  
+  /**
+   * Set voice to use for meditation
+   */
+  setVoice(voice: SpeechSynthesisVoice | null): void {
+    this.selectedVoice = voice;
+  }
+  
+  /**
+   * Register callback for line changes
+   */
+  onLineChange(callback: (line: string, index: number) => void): void {
+    this.onLineChangeCallback = callback;
+  }
+  
+  /**
+   * Register callback for active state changes
+   */
+  onStateChange(callback: (isActive: boolean) => void): void {
+    this.onStateChangeCallback = callback;
+  }
+  
+  /**
+   * Register callback for session completion
+   */
+  onCompletion(callback: () => void): void {
+    this.onCompletionCallback = callback;
+  }
+  
+  /**
+   * Get current meditation state
+   */
+  getState(): {
+    lines: string[];
+    currentLineIndex: number;
+    isActive: boolean;
+    progress: number;
+  } {
+    return {
+      lines: this.lines,
+      currentLineIndex: this.currentLineIndex,
+      isActive: this.isActive,
+      progress: this.lines.length > 0 
+        ? Math.min(((this.currentLineIndex + 1) / this.lines.length), 1) 
+        : 0
+    };
+  }
+  
+  private scheduleNextLine(): void {
+    // Check if we've reached the end
+    if (this.currentLineIndex >= this.lines.length - 1) {
+      if (this.onCompletionCallback) {
+        this.onCompletionCallback();
+      }
+      return;
+    }
+    
+    // Move to the next line
+    const nextIndex = this.currentLineIndex + 1;
+    
+    // Calculate timing based on speech support
+    const timing = this.speechSupported ? 500 : this.timings[this.currentLineIndex];
+    
+    // Schedule the next line
+    this.currentTimerId = setTimeout(() => {
+      this.currentLineIndex = nextIndex;
+      
+      // Notify about line change
+      if (this.onLineChangeCallback) {
+        this.onLineChangeCallback(this.lines[nextIndex], nextIndex);
+      }
+      
+      // Speak the new line
+      if (this.speechSupported && this.isActive) {
+        this.speakCurrentLine(() => {
+          this.scheduleNextLine();
+        });
+      } else if (this.isActive) {
+        this.scheduleNextLine();
+      }
+    }, timing);
+  }
+  
+  private speakCurrentLine(onComplete?: () => void): void {
+    if (!this.speechSupported || this.currentLineIndex < 0 || this.currentLineIndex >= this.lines.length) {
+      if (onComplete) onComplete();
+      return;
+    }
+    
+    const line = this.lines[this.currentLineIndex];
+    
+    // Use the library function which already handles pause markers
+    const utterance = speakMeditationLine(line, onComplete);
+    
+    // If an utterance was created (not a pause) and we have a selected voice, set it
+    if (utterance && this.selectedVoice) {
+      utterance.voice = this.selectedVoice;
+    }
+  }
+}
+
+/**
+ * Video background controller for managing meditation backgrounds
+ */
+export class VideoBackgroundController {
+  private videos: MeditationVideo[] = [];
+  private currentVideoIndex: number = -1;
+  private videoTimer: NodeJS.Timeout | null = null;
+  private durationTimer: NodeJS.Timeout | null = null;
+  private onVideoChangeCallback: ((video: MeditationVideo) => void) | null = null;
+  private onVideosLoadedCallback: ((videos: MeditationVideo[]) => void) | null = null;
+  private onErrorCallback: ((error: string) => void) | null = null;
+  
+  /**
+   * Load videos for a specific theme
+   */
+  async loadVideosForTheme(theme: string, count: number = 5): Promise<MeditationVideo[]> {
+    try {
+      const videos = await getPexelsVideo(theme, count);
+      
+      if (videos.length > 0) {
+        this.videos = videos;
+        this.currentVideoIndex = 0;
+        
+        if (this.onVideosLoadedCallback) {
+          this.onVideosLoadedCallback(videos);
+        }
+        
+        if (this.onVideoChangeCallback) {
+          this.onVideoChangeCallback(videos[0]);
+        }
+        
+        // Setup rotation timer
+        this.setupVideoRotation();
+      }
+      
+      return videos;
+    } catch (error) {
+      console.error('Error loading videos for theme:', error);
+      if (this.onErrorCallback) {
+        this.onErrorCallback(`Failed to load videos for theme: ${theme}`);
+      }
+      return [];
+    }
+  }
+  
+  /**
+   * Move to the next video in the rotation
+   */
+  moveToNextVideo(): void {
+    if (this.videos.length <= 1) return;
+    
+    this.clearVideoTimer();
+    
+    // Get next index
+    this.currentVideoIndex = getNextVideoIndex(this.currentVideoIndex, this.videos.length);
+    
+    // Notify about video change
+    if (this.onVideoChangeCallback) {
+      this.onVideoChangeCallback(this.videos[this.currentVideoIndex]);
+    }
+    
+    // Reset rotation timer
+    this.setupVideoRotation();
+  }
+  
+  /**
+   * Move to a specific video
+   */
+  setCurrentVideo(videoOrIndex: MeditationVideo | number): void {
+    if (this.videos.length === 0) return;
+    
+    let newIndex: number;
+    
+    if (typeof videoOrIndex === 'number') {
+      newIndex = Math.max(0, Math.min(this.videos.length - 1, videoOrIndex));
+    } else {
+      const foundIndex = this.videos.findIndex(v => v.id === videoOrIndex.id);
+      if (foundIndex === -1) return;
+      newIndex = foundIndex;
+    }
+    
+    if (newIndex === this.currentVideoIndex) return;
+    
+    this.currentVideoIndex = newIndex;
+    
+    // Notify about video change
+    if (this.onVideoChangeCallback) {
+      this.onVideoChangeCallback(this.videos[newIndex]);
+    }
+    
+    // Reset rotation timer
+    this.clearVideoTimer();
+    this.setupVideoRotation();
+  }
+  
+  /**
+   * Get the current video
+   */
+  getCurrentVideo(): MeditationVideo | null {
+    if (this.videos.length === 0 || this.currentVideoIndex < 0) {
+      return null;
+    }
+    return this.videos[this.currentVideoIndex];
+  }
+  
+  /**
+   * Get all loaded videos
+   */
+  getAllVideos(): MeditationVideo[] {
+    return this.videos;
+  }
+  
+  /**
+   * Set up a timer to refresh videos after a meditation duration
+   */
+  setupDurationTimer(durationMinutes: number, theme: string): void {
+    this.clearDurationTimer();
+    
+    if (durationMinutes <= 0) return;
+    
+    // Convert minutes to milliseconds
+    const durationMs = durationMinutes * 60 * 1000;
+    
+    this.durationTimer = setTimeout(async () => {
+      try {
+        await this.loadVideosForTheme(theme);
+      } catch (error) {
+        console.error('Error refreshing videos after duration:', error);
+      }
+    }, durationMs);
+  }
+  
+  /**
+   * Clean up all timers
+   */
+  cleanup(): void {
+    this.clearVideoTimer();
+    this.clearDurationTimer();
+  }
+  
+  /**
+   * Register callback for video changes
+   */
+  onVideoChange(callback: (video: MeditationVideo) => void): void {
+    this.onVideoChangeCallback = callback;
+  }
+  
+  /**
+   * Register callback for when videos are loaded
+   */
+  onVideosLoaded(callback: (videos: MeditationVideo[]) => void): void {
+    this.onVideosLoadedCallback = callback;
+  }
+  
+  /**
+   * Register callback for errors
+   */
+  onError(callback: (error: string) => void): void {
+    this.onErrorCallback = callback;
+  }
+  
+  /**
+   * Get the best source URL for a video
+   */
+  getBestVideoSource(video: MeditationVideo | null): string {
+    if (!video || !video.video_files || video.video_files.length === 0) {
+      return '';
+    }
+    
+    // Try HD first, then SD, then any available source
+    const hdSource = video.video_files.find(f => f.quality === 'hd');
+    if (hdSource && hdSource.link) return hdSource.link;
+    
+    const sdSource = video.video_files.find(f => f.quality === 'sd');
+    if (sdSource && sdSource.link) return sdSource.link;
+    
+    return video.video_files[0]?.link || '';
+  }
+  
+  private setupVideoRotation(): void {
+    this.clearVideoTimer();
+    
+    this.videoTimer = setTimeout(() => {
+      this.moveToNextVideo();
+    }, VIDEO_DURATION_MS);
+  }
+  
+  private clearVideoTimer(): void {
+    if (this.videoTimer) {
+      clearTimeout(this.videoTimer);
+      this.videoTimer = null;
+    }
+  }
+  
+  private clearDurationTimer(): void {
+    if (this.durationTimer) {
+      clearTimeout(this.durationTimer);
+      this.durationTimer = null;
+    }
+  }
+}
+
+/**
+ * Utility function to safely handle promises for video playback
+ */
+export const safePlayVideo = async (videoElement: HTMLVideoElement): Promise<void> => {
+  if (!videoElement) return;
+  
+  try {
+    // Try to play and handle the promise
+    const promise = videoElement.play();
+    
+    // If the browser returns a promise (most modern browsers)
+    if (promise !== undefined) {
+      await promise;
+    }
+  } catch (error: unknown) {
+    // Don't throw AbortError which is expected when switching videos
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.error("Video playback error:", error);
+      throw error;
+    }
+  }
+};
+
+/**
+ * Process a user's natural language command into a search query
+ */
+export const processMeditationCommand = (command: string): string => {
+  if (!command.trim()) return '';
+  
+  // Extract search query from commands like "show me ocean waves" -> "ocean waves"
+  return command.toLowerCase().includes('watch') || command.toLowerCase().includes('see') ? 
+    command.replace(/^(i want to |show me |let me see |i want to see |i want to watch |show |watch )/i, '') :
+    command;
 };

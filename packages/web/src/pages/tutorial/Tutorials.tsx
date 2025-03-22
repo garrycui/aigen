@@ -2,23 +2,10 @@ import { useState, useEffect } from 'react';
 import { Search, Filter, Book, Plus } from 'lucide-react';
 import TutorialList from '@components/tutorial/TutorialList';
 import GenerateTutorialModal from '@components/tutorial/GenerateTutorialModal';
+import { getUICategories, getUIDifficultyLevels } from '@shared/lib/tutorial/tutorials';
 
-const CATEGORIES = [
-  'All',
-  'AI Tools',
-  'Productivity',
-  'Communication',
-  'Technical Skills',
-  'Workplace Integration',
-  'Career Development'
-];
-
-const DIFFICULTY_LEVELS = [
-  'All',
-  'beginner',
-  'intermediate',
-  'advanced'
-];
+const CATEGORIES = getUICategories();
+const DIFFICULTY_LEVELS = getUIDifficultyLevels();
 
 const Tutorials = () => {
   const [searchQuery, setSearchQuery] = useState('');

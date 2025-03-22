@@ -3,14 +3,10 @@ import {
   MeditationVideo, 
   MeditationPreferences, 
   DEFAULT_PREFERENCES,
-  generateMeditationContent,
-  calculateLineTiming,
-  speakMeditationLine, // Make sure to import this
-  toggleSpeechSynthesis,
   stopSpeechSynthesis,
   initializeSpeechSynthesis,
-  getBestMeditationVoice,
-  createEnhancedMeditationUtterance
+  loadMeditationVoices,
+  MeditationSessionController
 } from '@shared/lib/mind/meditationspace';
 import { Maximize, Minimize, X, Play, Pause, Settings, Menu } from 'lucide-react';
 
@@ -65,109 +61,43 @@ const MeditationSession = ({
   const [currentLineIndex, setCurrentLineIndex] = useState(-1);
   const [showGuidance, setShowGuidance] = useState(false);
   const [isGuidanceActive, setIsGuidanceActive] = useState(false);
-  const [guidanceTimings, setGuidanceTimings] = useState<number[]>([]);
-  const [currentGuidanceTimerId, setCurrentGuidanceTimerId] = useState<NodeJS.Timeout | null>(null);
   const [isSpeechSupported, setIsSpeechSupported] = useState(true);
-  const [currentUtterance, setCurrentUtterance] = useState<SpeechSynthesisUtterance | null>(null);
   const [premiumVoiceCount, setPremiumVoiceCount] = useState(0);
+  
+  // Use meditation session controller
+  const sessionControllerRef = useRef<MeditationSessionController>(new MeditationSessionController());
 
-  // Filter voices specifically for meditation (replacing the previous voice loading logic)
+  // Voice loading with simplified code using shared library
   useEffect(() => {
-    const loadMeditationVoices = () => {
-      // Force synchronous loading on some browsers
-      const synth = window.speechSynthesis;
-      synth.getVoices();
+    const loadVoices = async () => {
+      // Initialize speech synthesis
+      setIsSpeechSupported(initializeSpeechSynthesis());
       
-      setTimeout(() => {
-        const allVoices = synth.getVoices();
-        if (allVoices.length > 0) {
-          // Filter for voices that work well for meditation
-          const meditationVoices = allVoices.filter(voice => {
-            // Prefer female voices, they tend to be more soothing for meditation
-            const isFemale = voice.name.toLowerCase().includes('female') || 
-                            voice.name.includes('Samantha') || 
-                            voice.name.includes('Moira') || 
-                            voice.name.includes('Karen');
-            
-            // Prefer premium/neural voices
-            const isPremium = voice.name.includes('Neural') || 
-                             voice.name.includes('Premium') || 
-                             voice.name.includes('Wavenet');
-            
-            // Include voices that are either female or premium, or have calming names
-            return isFemale || isPremium || 
-                  voice.name.includes('Calm') || 
-                  voice.name.includes('soft');
-          });
-          
-          // If we found meditation-suitable voices, use them
-          if (meditationVoices.length > 0) {
-            setAvailableVoices(meditationVoices);
-            
-            // Set default to the first female premium voice if available
-            const femalePremium = meditationVoices.find(v => 
-              (v.name.toLowerCase().includes('female') || 
-               v.name.includes('Samantha') || 
-               v.name.includes('Moira')) && 
-              (v.name.includes('Neural') || 
-               v.name.includes('Premium'))
-            );
-            
-            if (femalePremium) {
-              setSelectedVoice(femalePremium.name);
-            } else {
-              // Otherwise use first voice in filtered list
-              setSelectedVoice(meditationVoices[0].name);
-            }
-            
-            setPremiumVoiceCount(meditationVoices.filter(v => 
-              v.name.includes('Neural') || 
-              v.name.includes('Premium') || 
-              v.name.includes('Wavenet')
-            ).length);
-          } else {
-            // If no suitable voices, fall back to all voices
-            setAvailableVoices(allVoices);
-            if (allVoices.length > 0) {
-              setSelectedVoice(allVoices[0].name);
-            }
-          }
-        } else {
-          // Try again after a longer delay
-          setTimeout(loadMeditationVoices, 500);
-        }
-      }, 100);
+      // Load meditation-appropriate voices
+      const { voices, bestVoice, premiumCount } = await loadMeditationVoices({
+        preferFemale: true
+      });
+      
+      setAvailableVoices(voices);
+      setPremiumVoiceCount(premiumCount);
+      
+      if (bestVoice) {
+        setSelectedVoice(bestVoice.name);
+      } else if (voices.length > 0) {
+        setSelectedVoice(voices[0].name);
+      }
     };
     
-    loadMeditationVoices();
-    
-    // Set up event handler for voice loading
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = loadMeditationVoices;
-    }
-    
-    // Periodic check for browsers that don't fire the event
-    const periodicCheck = setTimeout(() => {
-      const currentVoices = window.speechSynthesis.getVoices();
-      if (currentVoices.length > 0 && availableVoices.length === 0) {
-        loadMeditationVoices();
-      }
-    }, 1000);
+    loadVoices();
     
     return () => {
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.onvoiceschanged = null;
-      }
-      clearTimeout(periodicCheck);
+      stopSpeechSynthesis();
+      sessionControllerRef.current.stop();
     };
   }, []);
 
   // Load default preferences based on MBTI type
   useEffect(() => {
-    // Initialize speech synthesis
-    const speechSupported = initializeSpeechSynthesis();
-    setIsSpeechSupported(speechSupported);
-    
     // Set default preferences based on MBTI
     const defaults = DEFAULT_PREFERENCES[mbtiType] || DEFAULT_PREFERENCES.default;
     setPreferences(prev => ({
@@ -175,61 +105,62 @@ const MeditationSession = ({
       focus: defaults.focus,
       background: defaults.background
     }));
-    
-    // Clean up speech synthesis when component unmounts
-    return () => {
-      stopSpeechSynthesis();
-    };
   }, [mbtiType]);
 
-  // Handle fullscreen change events from browser
+  // Setup meditation session controller callbacks
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      // Update state based on actual fullscreen status
-      const isInFullscreen = !!document.fullscreenElement;
-      setIsFullscreen(isInFullscreen);
-      
-      // Adjust container classes based on fullscreen state
-      if (isInFullscreen && containerRef.current) {
-        containerRef.current.classList.add('fixed', 'inset-0', 'z-50');
-        containerRef.current.classList.remove('relative');
-      } else if (containerRef.current) {
-        containerRef.current.classList.remove('fixed', 'inset-0', 'z-50');
-        containerRef.current.classList.add('relative');
-      }
-    };
+    const controller = sessionControllerRef.current;
     
-    // Listen for fullscreen change events
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    // Set up controller callbacks
+    controller.onLineChange((line, index) => {
+      setCurrentLineIndex(index);
+    });
+    
+    controller.onStateChange((isActive) => {
+      setIsGuidanceActive(isActive);
+      
+      // Notify parent component
+      if (onMeditationStateChange) {
+        onMeditationStateChange(isActive);
+      }
+    });
+    
+    controller.onCompletion(() => {
+      // Only show completion UI, don't end session automatically
+    });
     
     return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      controller.stop();
     };
-  }, []);
+  }, [onMeditationStateChange]);
 
-  // Generate meditation guidance based on preferences - modified to remove any duration limit
+  // Generate meditation guidance based on preferences
   const handleGenerateGuidance = async () => {
     setIsLoading(true);
     try {
-      // Get meditation content as an array of lines
-      // Note: we still use duration to generate appropriate-length content
-      const lines = await generateMeditationContent(
+      await sessionControllerRef.current.initialize(
         mbtiType,
         preferences.focus,
         preferences.duration
       );
       
-      // Calculate timing for each line
-      const timings = calculateLineTiming(lines, preferences.duration);
-      
+      // Get lines from the controller
+      const { lines } = sessionControllerRef.current.getState();
       setGuidanceLines(lines);
-      setGuidanceTimings(timings);
       setCurrentLineIndex(-1);
       setShowGuidance(true);
       
+      // Set the selected voice if available
+      if (selectedVoice) {
+        const voice = availableVoices.find(v => v.name === selectedVoice);
+        if (voice) {
+          sessionControllerRef.current.setVoice(voice);
+        }
+      }
+      
       // Start the guided meditation after a short delay
       setTimeout(() => {
-        startGuidedMeditation(lines, timings);
+        sessionControllerRef.current.start();
       }, 1000);
     } catch (error) {
       console.error('Error generating meditation guidance:', error);
@@ -238,102 +169,19 @@ const MeditationSession = ({
     }
   };
 
-  // Start guided meditation with voice
-  const startGuidedMeditation = (lines: string[], timings: number[]) => {
-    setIsGuidanceActive(true);
-    setCurrentLineIndex(0);
-    
-    // Start the first line
-    if (lines.length > 0) {
-      // Speak the first line
-      if (isSpeechSupported) {
-        const utterance = speakLineWithSelectedVoice(lines[0], () => {
-          // When line is finished being spoken, schedule the next line
-          scheduleNextLine(1, lines, timings);
-        });
-        setCurrentUtterance(utterance);
-      } else {
-        // If speech not supported, just use timings
-        scheduleNextLine(1, lines, timings);
-      }
-    }
-  };
-
-  // Modified schedule function to continue until all lines are spoken
-  const scheduleNextLine = (nextIndex: number, lines: string[], timings: number[]) => {
-    // Only end meditation when all lines are completed
-    if (nextIndex >= lines.length) {
-      // Don't automatically end the meditation experience
-      // Just mark guidance as completed but keep the meditation state active
-      setIsGuidanceActive(false);
-      
-      // Show a completion message or display final guidance
-      setCurrentLineIndex(lines.length - 1); // Keep showing the last line
-      return;
-    }
-    
-    // Clear any existing timer
-    if (currentGuidanceTimerId) {
-      clearTimeout(currentGuidanceTimerId);
-    }
-    
-    // Continue with next line regardless of elapsed time
-    const timerId = setTimeout(() => {
-      setCurrentLineIndex(nextIndex);
-      
-      // Speak the new line
-      if (isSpeechSupported) {
-        const utterance = speakLineWithSelectedVoice(lines[nextIndex], () => {
-          scheduleNextLine(nextIndex + 1, lines, timings);
-        });
-        setCurrentUtterance(utterance);
-      } else {
-        scheduleNextLine(nextIndex + 1, lines, timings);
-      }
-    }, isSpeechSupported ? 500 : timings[nextIndex - 1]);
-    
-    setCurrentGuidanceTimerId(timerId);
-  };
-
   // Handle pausing/resuming the guided meditation
   const toggleGuidedMeditation = () => {
     if (isGuidanceActive) {
-      // Pause
-      if (currentGuidanceTimerId) {
-        clearTimeout(currentGuidanceTimerId);
-      }
-      if (isSpeechSupported) {
-        toggleSpeechSynthesis(true); // Pause speech
-      }
-      setIsGuidanceActive(false);
+      sessionControllerRef.current.pause();
     } else {
-      // Resume
-      setIsGuidanceActive(true);
-      if (isSpeechSupported) {
-        toggleSpeechSynthesis(false); // Resume speech
-      }
-      // Resume with the current line
-      if (currentLineIndex < guidanceLines.length - 1) {
-        scheduleNextLine(currentLineIndex + 1, guidanceLines, guidanceTimings);
-      }
+      sessionControllerRef.current.resume();
     }
   };
 
-  // Modify stop guided meditation to make it explicit
+  // Stop guided meditation
   const stopGuidedMeditation = () => {
-    if (currentGuidanceTimerId) {
-      clearTimeout(currentGuidanceTimerId);
-      setCurrentGuidanceTimerId(null);
-    }
-    
-    if (isSpeechSupported) {
-      stopSpeechSynthesis();
-    }
-    
-    // Reset all meditation state
-    setIsGuidanceActive(false);
+    sessionControllerRef.current.stop();
     setShowGuidance(false);
-    setCurrentLineIndex(-1);
     
     // Notify parent that meditation has ended (only when explicitly stopped)
     if (onMeditationStateChange) {
@@ -349,13 +197,12 @@ const MeditationSession = ({
     }
     
     if (onStartMeditation) {
-      // Use setTimeout to ensure any video operations happen after this call completes
       setTimeout(() => {
         onStartMeditation();
       }, 0);
     }
     
-    // Use setTimeout to prevent race condition with video playback
+    // Start generating guidance
     setTimeout(() => {
       handleGenerateGuidance();
     }, 100);
@@ -364,9 +211,7 @@ const MeditationSession = ({
   // Clean up when component unmounts
   useEffect(() => {
     return () => {
-      if (currentGuidanceTimerId) {
-        clearTimeout(currentGuidanceTimerId);
-      }
+      // Clean up speech synthesis when component unmounts
       stopSpeechSynthesis();
     };
   }, []);
@@ -405,41 +250,6 @@ const MeditationSession = ({
       setIsLoading(false);
       setShowSettings(false);
     }
-  };
-
-  // Speak meditation line with the selected voice - fixed to handle pause markers
-  const speakLineWithSelectedVoice = (line: string, onComplete?: () => void) => {
-    // Check if this is a pause marker (don't speak it)
-    if (line === '[pause]') {
-      // Create a pause effect, then call the completion callback
-      setTimeout(() => {
-        if (onComplete) onComplete();
-      }, 3000);
-      return null;
-    }
-    
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(line);
-    
-    // Use selected voice if available
-    if (selectedVoice) {
-      const voice = availableVoices.find(v => v.name === selectedVoice);
-      if (voice) utterance.voice = voice;
-    }
-    
-    // Improve voice quality with better parameters
-    utterance.rate = 0.9;  // Slightly slower for meditation
-    utterance.pitch = 1.0;  // Natural pitch
-    utterance.volume = 0.9;
-    
-    if (onComplete) {
-      utterance.onend = onComplete;
-    }
-    
-    window.speechSynthesis.speak(utterance);
-    return utterance;
   };
 
   return (

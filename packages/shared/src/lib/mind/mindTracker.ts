@@ -36,6 +36,28 @@ export interface MoodAnalysis {
   riskLevel: 'low' | 'moderate' | 'high';
 }
 
+// Moved from MoodTracker.tsx - Common constants that can be used by both web and mobile
+export const MOOD_OPTIONS = [
+  { value: 'great', label: 'Great' },
+  { value: 'good', label: 'Good' },
+  { value: 'okay', label: 'Okay' },
+  { value: 'down', label: 'Down' },
+  { value: 'struggling', label: 'Struggling' }
+];
+
+export const COMMON_TAGS = [
+  'work stress',
+  'ai anxiety',
+  'learning',
+  'achievement',
+  'overwhelmed',
+  'motivated',
+  'productive',
+  'stuck',
+  'progress',
+  'challenged'
+];
+
 // Cache keys
 const MOOD_RESOURCES_CACHE_KEY = (userId: string, riskLevel: string) => 
   `mood-resources-${userId}-${riskLevel}`;
@@ -218,4 +240,81 @@ export const getRecommendedResources = async (userId: string, analysis: MoodAnal
       posts: relevantPosts
     };
   }, 2 * 60 * 60 * 1000); // 2 hour TTL for mood resources
+};
+
+/**
+ * Generate chart data from mood entries
+ */
+export const generateMoodChartData = (entries: MoodEntry[]) => {
+  return {
+    labels: entries.map(entry => {
+      // Handle different timestamp formats safely
+      if (!entry.createdAt) return '';
+      
+      let date;
+      if (entry.createdAt.toDate && typeof entry.createdAt.toDate === 'function') {
+        // Firestore timestamp
+        date = entry.createdAt.toDate();
+      } else if (entry.createdAt instanceof Date) {
+        // JavaScript Date object
+        date = entry.createdAt;
+      } else if (typeof entry.createdAt === 'string') {
+        // ISO string
+        date = new Date(entry.createdAt);
+      } else if (typeof entry.createdAt === 'number') {
+        // Unix timestamp
+        date = new Date(entry.createdAt);
+      } else {
+        // Fallback
+        return 'Unknown date';
+      }
+      
+      return date.toLocaleDateString();
+    }).reverse(),
+    datasets: [{
+      label: 'Mood Rating',
+      data: entries.map(entry => entry.rating).reverse(),
+      fill: false,
+      borderColor: 'rgb(99, 102, 241)',
+      tension: 0.1
+    }]
+  };
+};
+
+/**
+ * Get trend icon type based on the analysis trend
+ */
+export const getTrendType = (trend: string | undefined): 'up' | 'down' | 'stable' => {
+  if (!trend) return 'stable';
+  
+  switch (trend) {
+    case 'improving':
+      return 'up';
+    case 'declining':
+      return 'down';
+    default:
+      return 'stable';
+  }
+};
+
+/**
+ * Get the latest mood rating
+ */
+export const getLatestMoodRating = (entries: MoodEntry[]): number => {
+  if (entries.length === 0) return 0;
+  return entries[0].rating;
+};
+
+/**
+ * Calculate mood trend between oldest and newest entries
+ */
+export const calculateMoodTrend = (entries: MoodEntry[]): number => {
+  if (entries.length <= 1) return 0;
+  
+  // Get oldest and newest entry ratings
+  const oldest = entries[entries.length - 1].rating;
+  const newest = entries[0].rating;
+  
+  // Return the difference
+  return newest - oldest;
 };

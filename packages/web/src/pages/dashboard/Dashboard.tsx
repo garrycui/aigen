@@ -13,37 +13,18 @@ import { getRecommendedTutorials, Tutorial } from '@shared/lib/tutorial/tutorial
 import { getUserBadges, checkAndAwardBadges, Badge } from '@shared/lib/dashboard/badges';
 import { useAuth } from '@context/AuthContext';
 import { serverTimestamp } from 'firebase/firestore';
-import { getUser, updateUser, getLearningGoals, getUserMoodEntries, tutorialCache } from '@shared/lib/common/cache';
+import { getUser, updateUser, getLearningGoals, tutorialCache } from '@shared/lib/common/cache';
 import { getLatestAssessment } from '@shared/lib/assessment/assessment';
 import GrowthModal from '@components/mind/GrowthModal';
 import { motion } from 'framer-motion';
 import TourGuide from '@components/dashboard/TourGuide';
-
-interface UserProgress {
-  assessment: boolean;
-  goals: {
-    total: number;
-    completed: number;
-    set: number;
-  };
-  tutorials: {
-    total: number;
-    completed: number;
-  };
-  posts: {
-    total: number;
-    published: number;
-  };
-}
-
-interface PsychRecord {
-  id: string;
-  rating: number;
-  mood: string;
-  notes: string;
-  tags: string[];
-  createdAt: any;
-}
+import { UserProgress, calculateTotalProgress } from '@shared/lib/dashboard/progress';
+import { 
+  MoodEntry, 
+  getMoodEntries, 
+  calculateMoodTrend,
+  getLatestMoodRating
+} from '@shared/lib/mind/mindTracker';
 
 const Dashboard = () => {
   const { showReview, setShowReview, isPeriodic } = useReviewPrompt(); 
@@ -61,15 +42,15 @@ const Dashboard = () => {
   const [badges, setBadges] = useState<Badge[]>([]);
   const [progress, setProgress] = useState<UserProgress>({
     assessment: false,
-    goals: { total: 3, completed: 0, set: 0 },
+    goals: { total: 3, completed: 0 },
     tutorials: { total: 10, completed: 0 },
     posts: { total: 5, published: 0 }
   });
   const [isLoading, setIsLoading] = useState(true);
   const [completedTutorialIds, setCompletedTutorialIds] = useState<string[]>([]);
-  const [psychRecords, setPsychRecords] = useState<PsychRecord[]>([]);
+  const [moodRecords, setMoodRecords] = useState<MoodEntry[]>([]);
   const [latestRating, setLatestRating] = useState<number>(0);
-  const [psychTrend, setPsychTrend] = useState<number>(0);
+  const [moodTrend, setMoodTrend] = useState<number>(0);
 
   const refreshBadges = async () => {
     if (!user) return;
@@ -109,8 +90,7 @@ const Dashboard = () => {
           assessment: !!assessmentResult.data,
           goals: {
             total: 3,
-            completed: completedGoals,
-            set: totalGoalsSet
+            completed: completedGoals
           },
           tutorials: {
             total: 10,
@@ -156,31 +136,28 @@ const Dashboard = () => {
     loadDashboardData();
   }, [user, location.key]); // Add location.key as dependency to refresh when navigating
 
-  const fetchPsychDataForDashboard = async (forceRefresh = false) => {
+  const fetchMoodDataForDashboard = async (forceRefresh = false) => {
     if (!user) return;
     try {
-      // Use cache service but force a refresh if needed
-      const records = await getUserMoodEntries(user.id, forceRefresh) as PsychRecord[];
-      setPsychRecords(records);
+      // Get mood entries using the imported function
+      const records = await getMoodEntries(user.id);
+      setMoodRecords(records);
       
-      if (records.length) {
-        // Get the most recent entry (first in the array since they're ordered by descending date)
-        setLatestRating(records[0].rating);
-      }
-      if (records.length > 1) {
-        // Calculate trend between oldest and newest entries
-        const oldest = records[records.length - 1].rating;
-        const newest = records[0].rating;
-        setPsychTrend(newest - oldest);
-      }
+      // Get the latest rating
+      const latestRating = getLatestMoodRating(records);
+      setLatestRating(latestRating);
+      
+      // Calculate mood trend
+      const trend = calculateMoodTrend(records);
+      setMoodTrend(trend);
     } catch (error) {
-      console.error('Error fetching psychology data for dashboard:', error);
+      console.error('Error fetching mood data for dashboard:', error);
     }
   };
 
   useEffect(() => {
     if (user) {
-      fetchPsychDataForDashboard();
+      fetchMoodDataForDashboard();
     }
   }, [user]);
 
@@ -292,14 +269,7 @@ const Dashboard = () => {
     );
   }
 
-  const completionRate = Math.round(
-    ((progress.assessment ? 1 : 0) +
-      (progress.goals.completed / Math.max(progress.goals.total, 1)) +
-      (progress.tutorials.completed / Math.max(progress.tutorials.total, 1)) +
-      (progress.posts.published / Math.max(progress.posts.total, 1))) /
-      4 *
-      100
-  );
+  const completionRate = calculateTotalProgress(progress);
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -402,9 +372,9 @@ const Dashboard = () => {
           <h3 className="text-2xl font-bold text-gray-900 mb-1">
             {latestRating ? `Rating: ${latestRating}` : 'No Data'}
           </h3>
-          {psychRecords.length > 1 && (
+          {moodRecords.length > 1 && (
             <p className="text-gray-600 text-sm">
-              Trend: {psychTrend > 0 ? `+${psychTrend}` : psychTrend}
+              Trend: {moodTrend > 0 ? `+${moodTrend}` : moodTrend}
             </p>
           )}
         </button>
@@ -475,9 +445,9 @@ const Dashboard = () => {
 
                 <div className="relative flex items-center">
                   <div className={`absolute left-4 -ml-2 h-4 w-4 rounded-full border-2 ${
-                    progress.goals.set >= progress.goals.total
+                    progress.goals.completed >= progress.goals.total
                       ? 'bg-green-500 border-green-500'
-                      : progress.goals.set > 0
+                      : progress.goals.completed > 0
                       ? 'bg-yellow-500 border-yellow-500'
                       : 'bg-white border-gray-300'
                   }`}></div>
@@ -486,11 +456,11 @@ const Dashboard = () => {
                       Set Learning Goals
                     </Link>
                     <p className="text-sm text-gray-500">
-                      {progress.goals.set === 0
+                      {progress.goals.completed === 0
                         ? 'Not Started'
-                        : progress.goals.set >= progress.goals.total
+                        : progress.goals.completed >= progress.goals.total
                         ? 'Completed'
-                        : `${progress.goals.set} of ${progress.goals.total} goals set`}
+                        : `${progress.goals.completed} of ${progress.goals.total} goals set`}
                     </p>
                   </div>
                 </div>
@@ -556,7 +526,7 @@ const Dashboard = () => {
       <GrowthModal
         isOpen={isGrowthModalOpen}
         onClose={() => setIsGrowthModalOpen(false)}
-        onUpdate={() => fetchPsychDataForDashboard(true)}
+        onUpdate={() => fetchMoodDataForDashboard(true)}
       />
     </div>
   );

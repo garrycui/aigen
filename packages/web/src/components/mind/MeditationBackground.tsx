@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { 
-  MeditationVideo, 
-  VIDEO_DURATION_MS,
-  getNextVideoIndex
+  MeditationVideo,
+  VideoBackgroundController,
+  safePlayVideo,
+  processMeditationCommand
 } from '@shared/lib/mind/meditationspace';
-import { getPexelsVideo } from '@shared/lib/common/pexels';
 import { Send } from 'lucide-react';
 
 interface MeditationBackgroundProps {
@@ -36,11 +36,6 @@ const MeditationBackground = ({
   const [userCommand, setUserCommand] = useState('');
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
 
-  // Video timer state
-  const [videoEnded, setVideoEnded] = useState(false);
-  const [videoTimerId, setVideoTimerId] = useState<NodeJS.Timeout | null>(null);
-  const [durationTimerId, setDurationTimerId] = useState<NodeJS.Timeout | null>(null);
-
   // State for video playback and error handling
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoLoadAttempts, setVideoLoadAttempts] = useState(0);
@@ -48,196 +43,113 @@ const MeditationBackground = ({
   const isPlayingRef = useRef(false);
   const maxRetryAttempts = 3;
 
-  // Create a stable reference to the callback
-  const onBackgroundChangeRef = useRef(onBackgroundChange);
+  // Use video background controller
+  const videoControllerRef = useRef<VideoBackgroundController>(new VideoBackgroundController());
   
-  // Update the ref when the callback changes
+  // Set up controller callbacks
   useEffect(() => {
-    onBackgroundChangeRef.current = onBackgroundChange;
+    const controller = videoControllerRef.current;
+    
+    // Handle video changes
+    controller.onVideoChange((video) => {
+      setCurrentVideo(video);
+    });
+    
+    // Handle loaded videos
+    controller.onVideosLoaded((videos) => {
+      setBackgroundVideos(videos);
+      
+      if (onBackgroundChange && videos.length > 0) {
+        const currentVideo = controller.getCurrentVideo();
+        if (currentVideo) {
+          onBackgroundChange(videos, currentVideo);
+        }
+      }
+    });
+    
+    // Handle errors
+    controller.onError((errorMsg) => {
+      setVideoError(errorMsg);
+    });
+    
+    return () => {
+      controller.cleanup();
+    };
   }, [onBackgroundChange]);
 
-  // Helper function to get the best video source
-  const getBestVideoSource = (video: MeditationVideo | null): string => {
-    if (!video || !video.video_files || video.video_files.length === 0) {
-      return '';
-    }
-    
-    // Try HD first, then SD, then any available source
-    const hdSource = video.video_files.find(f => f.quality === 'hd');
-    if (hdSource && hdSource.link) return hdSource.link;
-    
-    const sdSource = video.video_files.find(f => f.quality === 'sd');
-    if (sdSource && sdSource.link) return sdSource.link;
-    
-    return video.video_files[0]?.link || '';
-  };
-
-  // Fetch background videos from Pexels when theme changes
+  // Load videos when theme changes
   useEffect(() => {
     if (!backgroundTheme) return;
     
-    let isMounted = true;
+    setIsLoading(true);
     
-    const fetchVideos = async () => {
-      setIsLoading(true);
-      try {
-        const videos = await getPexelsVideo(backgroundTheme, 5);
-        
-        if (isMounted && videos.length > 0) {
-          const firstVideo = videos[0];
-          
-          // Update state first
-          setBackgroundVideos(videos);
-          setCurrentVideo(firstVideo);
-          
-          // Then notify parent in a separate effect
-          setTimeout(() => {
-            if (isMounted && onBackgroundChangeRef.current) {
-              onBackgroundChangeRef.current(videos, firstVideo);
-            }
-          }, 0);
-        }
-      } catch (error) {
-        console.error('Error fetching background videos:', error);
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-    
-    fetchVideos();
-    
-    return () => { isMounted = false; };
+    videoControllerRef.current.loadVideosForTheme(backgroundTheme, 5)
+      .finally(() => {
+        setIsLoading(false);
+      });
   }, [backgroundTheme]);
+  
+  // Set up duration timer when meditation is active
+  useEffect(() => {
+    if (isMeditationActive && meditationDuration > 0) {
+      videoControllerRef.current.setupDurationTimer(meditationDuration, backgroundTheme);
+    }
+  }, [isMeditationActive, meditationDuration, backgroundTheme]);
 
   // Video playback with proper promise handling
-  const safePlayVideo = async () => {
+  const playVideo = async () => {
     if (!videoRef.current || isPlayingRef.current) return;
     
     try {
-      // Mark as attempting to play
       isPlayingRef.current = true;
       setIsVideoLoading(true);
       
-      // Cancel any existing play promise
-      if (playPromiseRef.current) {
-        await playPromiseRef.current.catch(() => {});
-        playPromiseRef.current = null;
-      }
-      
-      // Small delay to ensure the browser is ready
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
-      // Try to play and store the promise
-      const promise = videoRef.current.play();
-      playPromiseRef.current = promise;
-      
-      // Wait for the play operation to complete
-      if (promise !== undefined) {
-        await promise;
-      }
-    } catch (error: unknown) {
-      // Don't log AbortError which is expected when switching videos
-      if (error instanceof Error) {
-        if (error.name !== 'AbortError') {
-          console.error("Video playback error:", error);
-          setVideoError(`Playback error: ${error.message}`);
-        }
-      } else {
-        console.error("Unknown video playback error:", error);
-        setVideoError(`Playback error: Unknown error`);
-      }
+      await safePlayVideo(videoRef.current);
+    } catch (error) {
+      console.error("Video playback error:", error);
+      setVideoError(`Playback error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
-      playPromiseRef.current = null;
       isPlayingRef.current = false;
       setIsVideoLoading(false);
     }
   };
 
-  // Handle video source changes with improved error handling
+  // Handle video source changes
   useEffect(() => {
-    if (!currentVideo) return;
+    if (!currentVideo || !videoRef.current) return;
     
-    let isMounted = true;
+    // Reset video state
+    videoRef.current.pause();
+    videoRef.current.currentTime = 0;
+    setVideoError(null);
     
-    const prepareVideo = async () => {
-      if (!videoRef.current) return;
-      
-      try {
-        // Stop any current playback
-        try {
-          videoRef.current.pause();
-          // Cancel any pending play promise
-          if (playPromiseRef.current) {
-            await playPromiseRef.current.catch(() => {});
-            playPromiseRef.current = null;
-          }
-        } catch (e) {}
-        
-        // Reset video state
-        videoRef.current.currentTime = 0;
-        setVideoError(null);
-        
-        // Wait a moment before attempting playback
-        await new Promise(resolve => setTimeout(resolve, 150));
-        
-        if (isMounted && videoRef.current) {
-          safePlayVideo();
-        }
-      } catch (error) {
-        console.error("Error preparing video:", error);
-      }
-    };
-    
-    prepareVideo();
-    
-    return () => { isMounted = false; };
+    // Small delay before playing
+    setTimeout(() => {
+      playVideo();
+    }, 150);
   }, [currentVideo?.id]);
 
   // Process user commands for meditation space
-  const processUserCommand = async (command: string) => {
+  const handleUserCommand = async (command: string) => {
     if (!command.trim()) return;
     
     setIsSearching(true);
     setCommandHistory(prev => [...prev, command]);
     
     try {
-      // Parse user command to determine what they want to see
-      const searchQuery = command.toLowerCase().includes('watch') || command.toLowerCase().includes('see') ? 
-        command.replace(/^(i want to |show me |let me see |i want to see |i want to watch |show |watch )/i, '') :
-        command;
+      // Parse command using shared helper
+      const searchQuery = processMeditationCommand(command);
       
-      // Fetch videos from Pexels API
-      const videos = await getPexelsVideo(searchQuery, 6);
-      
-      if (videos.length > 0) {
-        setBackgroundVideos(videos);
-        setCurrentVideo(videos[0]);
-        
-        // Notify parent outside of render cycle
-        setTimeout(() => {
-          if (onBackgroundChangeRef.current) {
-            onBackgroundChangeRef.current(videos, videos[0]);
-          }
-        }, 0);
-      } else {
-        // Fall back to default searches if no results
-        const fallbackTerms = ['nature', 'ocean', 'mountains', 'forest', 'clouds'];
-        const randomTerm = fallbackTerms[Math.floor(Math.random() * fallbackTerms.length)];
-        const fallbackVideos = await getPexelsVideo(randomTerm, 3);
-        
-        if (fallbackVideos.length > 0) {
-          setBackgroundVideos(fallbackVideos);
-          setCurrentVideo(fallbackVideos[0]);
-          
-          if (onBackgroundChangeRef.current) {
-            onBackgroundChangeRef.current(fallbackVideos, fallbackVideos[0]);
-          }
-        }
-      }
+      // Load videos for the search query
+      await videoControllerRef.current.loadVideosForTheme(searchQuery, 6);
     } catch (error) {
       console.error('Error processing meditation command:', error);
+      
+      // Try a fallback theme
+      const fallbackTerms = ['nature', 'ocean', 'mountains', 'forest', 'clouds'];
+      const randomTerm = fallbackTerms[Math.floor(Math.random() * fallbackTerms.length)];
+      
+      await videoControllerRef.current.loadVideosForTheme(randomTerm, 3);
     } finally {
       setIsSearching(false);
       setUserCommand('');
@@ -247,74 +159,15 @@ const MeditationBackground = ({
   // Handle command submission
   const handleCommandSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    processUserCommand(userCommand);
+    handleUserCommand(userCommand);
   };
   
-  // Move to the next video
-  const moveToNextVideo = () => {
-    if (backgroundVideos.length > 1) {
-      const currentIndex = backgroundVideos.findIndex(v => v.id === currentVideo?.id);
-      const nextIndex = getNextVideoIndex(currentIndex, backgroundVideos.length);
-      const nextVideo = backgroundVideos[nextIndex];
-      
-      setCurrentVideo(nextVideo);
-      setVideoEnded(false);
-      
-      if (onBackgroundChangeRef.current) {
-        onBackgroundChangeRef.current(backgroundVideos, nextVideo);
-      }
-      
-      // Reset video timer when changing videos
-      if (videoTimerId) {
-        clearTimeout(videoTimerId);
-      }
-      
-      // Set new timer for the next video
-      const newTimerId = setTimeout(() => {
-        moveToNextVideo();
-      }, VIDEO_DURATION_MS);
-      
-      setVideoTimerId(newTimerId);
-    }
-  };
-
-  // Set up video timer when current video changes
-  useEffect(() => {
-    if (!currentVideo) return;
-    
-    // Clear any existing timer
-    if (videoTimerId) {
-      clearTimeout(videoTimerId);
-    }
-    
-    // Set a new timer for this video
-    const newTimerId = setTimeout(() => {
-      moveToNextVideo();
-    }, VIDEO_DURATION_MS);
-    
-    setVideoTimerId(newTimerId);
-    
-    return () => {
-      if (videoTimerId) {
-        clearTimeout(videoTimerId);
-      }
-    };
-  }, [currentVideo?.id]);
-
-  // Change the current video manually
+  // Handle video click to change current video
   const handleChangeVideo = (video: MeditationVideo) => {
-    if (currentVideo?.id === video.id) return;
-    
-    setCurrentVideo(video);
-    
-    setTimeout(() => {
-      if (onBackgroundChangeRef.current) {
-        onBackgroundChangeRef.current(backgroundVideos, video);
-      }
-    }, 0);
+    videoControllerRef.current.setCurrentVideo(video);
   };
 
-  // Improved video event handlers
+  // Video event handlers
   const handleVideoLoadedData = () => {
     setIsVideoLoading(false);
     setVideoError(null);
@@ -322,7 +175,7 @@ const MeditationBackground = ({
     
     // Make sure video is playing
     if (!isPlayingRef.current) {
-      safePlayVideo();
+      playVideo();
     }
   };
 
@@ -346,62 +199,10 @@ const MeditationBackground = ({
       setVideoLoadAttempts(prev => prev + 1);
       
       setTimeout(() => {
-        const currentIndex = backgroundVideos.findIndex(v => v.id === currentVideo?.id);
-        const nextIndex = (currentIndex + 1) % backgroundVideos.length;
-        setCurrentVideo(backgroundVideos[nextIndex]);
+        videoControllerRef.current.moveToNextVideo();
       }, 500);
     }
   };
-
-  // Set up meditation duration timer
-  useEffect(() => {
-    if (durationTimerId) {
-      clearTimeout(durationTimerId);
-      setDurationTimerId(null);
-    }
-    
-    if (isMeditationActive && meditationDuration > 0) {
-      
-      // Convert minutes to milliseconds
-      const durationMs = meditationDuration * 60 * 1000;
-      
-      const timerId = setTimeout(async () => {
-        
-        try {
-          const newVideos = await getPexelsVideo(backgroundTheme, 5);
-          
-          if (newVideos.length > 0) {
-            setBackgroundVideos(newVideos);
-            setCurrentVideo(newVideos[0]);
-            
-            if (onBackgroundChangeRef.current) {
-              setTimeout(() => {
-                onBackgroundChangeRef.current?.(newVideos, newVideos[0]);
-              }, 0);
-            }
-          }
-        } catch (error) {
-          console.error("Error refreshing background videos:", error);
-        }
-      }, durationMs);
-      
-      setDurationTimerId(timerId);
-    }
-    
-    return () => {
-      if (durationTimerId) {
-        clearTimeout(durationTimerId);
-      }
-    };
-  }, [isMeditationActive, meditationDuration, backgroundTheme]);
-
-  // Clean up all timers
-  useEffect(() => {
-    return () => {
-      if (videoTimerId) clearTimeout(videoTimerId);
-      if (durationTimerId) clearTimeout(durationTimerId);
-    };
-  }, []);
 
   return (
     <div className="absolute inset-0 w-full h-full overflow-hidden">
@@ -409,7 +210,7 @@ const MeditationBackground = ({
       {currentVideo ? (
         <video
           ref={videoRef}
-          src={getBestVideoSource(currentVideo)}
+          src={currentVideo.video_files[0]?.link || ''}
           poster={currentVideo.image}
           className="absolute inset-0 w-full h-full object-cover"
           loop={true}
@@ -422,7 +223,7 @@ const MeditationBackground = ({
           onEnded={() => {
             if (videoRef.current) {
               videoRef.current.currentTime = 0;
-              safePlayVideo();
+              playVideo();
             }
           }}
         />
@@ -450,8 +251,7 @@ const MeditationBackground = ({
               onClick={() => {
                 setVideoError(null);
                 const fallbackThemes = ['nature', 'ocean', 'forest', 'sunset'];
-                const randomTheme = fallbackThemes[Math.floor(Math.random() * fallbackThemes.length)];
-                processUserCommand(randomTheme);
+                handleUserCommand(fallbackThemes[Math.floor(Math.random() * fallbackThemes.length)]);
               }}
               className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded"
             >
@@ -495,7 +295,7 @@ const MeditationBackground = ({
                 {commandHistory.slice(-3).map((cmd, i) => (
                   <button
                     key={i}
-                    onClick={() => processUserCommand(cmd)}
+                    onClick={() => handleUserCommand(cmd)}
                     className="px-3 py-1.5 bg-white/20 backdrop-blur-md text-white rounded-full hover:bg-white/30 transition-colors"
                   >
                     {cmd}

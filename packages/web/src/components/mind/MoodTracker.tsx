@@ -13,7 +13,18 @@ import {
 import { Smile, Meh, Frown, Tag, AlertTriangle, TrendingUp, TrendingDown, Minus, BookOpen, MessageSquare } from 'lucide-react';
 import { useAuth } from '@context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { saveMoodEntry, getMoodEntries, analyzeMoodEntries, getRecommendedResources, MoodEntry, MoodAnalysis } from '@shared/lib/mind/mindTracker';
+import { 
+  saveMoodEntry, 
+  getMoodEntries, 
+  analyzeMoodEntries, 
+  getRecommendedResources, 
+  MoodEntry, 
+  MoodAnalysis, 
+  MOOD_OPTIONS as MOOD_DATA, 
+  COMMON_TAGS,
+  generateMoodChartData,
+  getTrendType
+} from '@shared/lib/mind/mindTracker';
 
 // Register ChartJS components
 ChartJS.register(
@@ -26,26 +37,15 @@ ChartJS.register(
   Legend
 );
 
-const MOOD_OPTIONS = [
-  { value: 'great', label: 'Great', icon: <Smile className="h-6 w-6 text-green-500" /> },
-  { value: 'good', label: 'Good', icon: <Smile className="h-6 w-6 text-blue-500" /> },
-  { value: 'okay', label: 'Okay', icon: <Meh className="h-6 w-6 text-yellow-500" /> },
-  { value: 'down', label: 'Down', icon: <Frown className="h-6 w-6 text-orange-500" /> },
-  { value: 'struggling', label: 'Struggling', icon: <Frown className="h-6 w-6 text-red-500" /> }
-];
-
-const COMMON_TAGS = [
-  'work stress',
-  'ai anxiety',
-  'learning',
-  'achievement',
-  'overwhelmed',
-  'motivated',
-  'productive',
-  'stuck',
-  'progress',
-  'challenged'
-];
+// Map the mood data to include icons for the web interface
+const MOOD_OPTIONS = MOOD_DATA.map(mood => ({
+  ...mood,
+  icon: mood.value === 'great' ? <Smile className="h-6 w-6 text-green-500" /> :
+        mood.value === 'good' ? <Smile className="h-6 w-6 text-blue-500" /> :
+        mood.value === 'okay' ? <Meh className="h-6 w-6 text-yellow-500" /> :
+        mood.value === 'down' ? <Frown className="h-6 w-6 text-orange-500" /> :
+        <Frown className="h-6 w-6 text-red-500" />
+}));
 
 interface MoodTrackerProps {
   onClose: () => void;
@@ -123,26 +123,16 @@ const MoodTracker: React.FC<MoodTrackerProps> = ({ onClose, onUpdate }) => {
     }
   };
 
-  const chartData = {
-    labels: entries.map(entry => 
-      new Date(entry.createdAt.toDate()).toLocaleDateString()
-    ).reverse(),
-    datasets: [{
-      label: 'Mood Rating',
-      data: entries.map(entry => entry.rating).reverse(),
-      fill: false,
-      borderColor: 'rgb(99, 102, 241)',
-      tension: 0.1
-    }]
-  };
+  const chartData = generateMoodChartData(entries);
 
   const renderTrendIcon = () => {
     if (!analysis) return null;
     
-    switch (analysis.trend) {
-      case 'improving':
+    const trendType = getTrendType(analysis.trend);
+    switch (trendType) {
+      case 'up':
         return <TrendingUp className="h-5 w-5 text-green-500" />;
-      case 'declining':
+      case 'down':
         return <TrendingDown className="h-5 w-5 text-red-500" />;
       default:
         return <Minus className="h-5 w-5 text-gray-500" />;

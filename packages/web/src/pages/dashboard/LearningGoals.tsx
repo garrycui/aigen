@@ -2,25 +2,15 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Target, Plus, Trash2, BookOpen, Target as TargetIcon, Sparkles } from 'lucide-react';
 import { useAuth } from '@context/AuthContext';
-import { generateTutorial } from '@shared/lib/tutorial/tutorials';
 import { 
-  getLearningGoals, 
-  updateLearningGoals, 
-  tutorialCache 
-} from '@shared/lib/common/cache';
-import { generateTutorialTopics } from '@shared/lib/common/openai';
-
-interface LearningGoal {
-  id: string;
-  title: string;
-  description: string;
-  progress: number;
-  status: 'not_started' | 'in_progress' | 'completed';
-  createdAt: Date;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-}
-
-type Difficulty = 'beginner' | 'intermediate' | 'advanced';
+  LearningGoal, 
+  Difficulty,
+  fetchUserGoals,
+  createNewGoal,
+  generateTutorialsForGoal,
+  updateGoalProgressById,
+  deleteGoalById
+} from '@shared/lib/dashboard/learningGoals';
 
 const LearningGoals = () => {
   const navigate = useNavigate();
@@ -33,6 +23,7 @@ const LearningGoals = () => {
     difficulty: 'intermediate' as Difficulty 
   });
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     loadGoals();
@@ -41,12 +32,15 @@ const LearningGoals = () => {
   const loadGoals = async () => {
     if (!user) return;
     try {
-      // Use cache service instead of direct Firestore access
-      const userGoals = await getLearningGoals(user.id);
+      setIsLoading(true);
+      const userGoals = await fetchUserGoals(user.id);
       setGoals(userGoals);
+      setError(null);
     } catch (error) {
       console.error('Error loading goals:', error);
       setError('Failed to load learning goals');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -58,7 +52,10 @@ const LearningGoals = () => {
     }
 
     try {
-      const newGoalObj: LearningGoal = {
+      setIsLoading(true);
+      
+      // Optimistically update UI first
+      const optimisticNewGoal: LearningGoal = {
         id: Date.now().toString(),
         title: newGoal.title,
         description: newGoal.description,
@@ -67,51 +64,50 @@ const LearningGoals = () => {
         createdAt: new Date(),
         difficulty: newGoal.difficulty
       };
-
-      // Create updated goals array with the new goal
-      const updatedGoals = [...goals, newGoalObj];
       
-      // Use cache service to update learning goals
-      await updateLearningGoals(user.id, updatedGoals);
-
-      setGoals(updatedGoals);
+      const optimisticGoals = [...goals, optimisticNewGoal];
+      setGoals(optimisticGoals);
+      
+      // Reset form
       setNewGoal({ title: '', description: '', difficulty: 'intermediate' });
       setIsAddingGoal(false);
       setError(null);
-
-      // Use the imported function to generate tutorial topics
-      const topics = await generateTutorialTopics(newGoal.title, newGoal.description);
       
-      // Limit to 3 tutorials per goal
-      const selectedTopics = topics.slice(0, 3);
+      // Actually create the goal in the background
+      const updatedGoals = await createNewGoal(user.id, goals, {
+        title: optimisticNewGoal.title,
+        description: optimisticNewGoal.description,
+        difficulty: optimisticNewGoal.difficulty
+      });
       
-      // Generate a tutorial for each topic using the selected difficulty
-      for (const topic of selectedTopics) {
-        await generateTutorial(user.id, topic, newGoal.difficulty);
-      }
+      // Start generating tutorials in the background (don't await)
+      generateTutorialsForGoal(
+        user.id,
+        optimisticNewGoal.title,
+        optimisticNewGoal.description,
+        optimisticNewGoal.difficulty
+      ).catch(err => {
+        console.error('Background tutorial generation failed:', err);
+        // We don't show errors for background processes to the user
+      });
       
-      // Invalidate recommended tutorials cache
-      if (user.id) {
-        const recommendedCacheKeys = tutorialCache.keys().filter(key => 
-          key.includes(`recommended-tutorials-${user.id}`)
-        );
-        
-        if (recommendedCacheKeys.length > 0) {
-          recommendedCacheKeys.forEach(key => tutorialCache.delete(key));
-          console.log(`Invalidated ${recommendedCacheKeys.length} recommended tutorial cache entries for new goals`);
-        }
-      }
-      
-    } catch (err) {
-      console.error('Error generating tutorials for goal:', err);
-      setError('Failed to generate tutorials from your goal.');
+    } catch (err: any) {
+      console.error('Error adding goal:', err);
+      setError(err.message || 'Failed to add learning goal');
+      // Revert optimistic update if it failed
+      loadGoals();
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const updateGoalProgress = async (goalId: string, progress: number) => {
     if (!user) return;
     try {
-      const updatedGoals = goals.map(goal => {
+      setIsLoading(true);
+      
+      // Optimistically update UI first
+      const optimisticGoals = goals.map(goal => {
         if (goal.id === goalId) {
           return {
             ...goal,
@@ -121,27 +117,41 @@ const LearningGoals = () => {
         }
         return goal;
       });
-
-      // Use cache service to update learning goals
-      await updateLearningGoals(user.id, updatedGoals);
-      setGoals(updatedGoals);
+      
+      setGoals(optimisticGoals);
+      
+      // Update in the background
+      await updateGoalProgressById(user.id, goals, goalId, progress);
+      setError(null);
     } catch (error) {
       console.error('Error updating goal progress:', error);
       setError('Failed to update goal progress');
+      // Revert optimistic update if it failed
+      loadGoals();
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const deleteGoal = async (goalId: string) => {
     if (!user) return;
     try {
-      const updatedGoals = goals.filter(goal => goal.id !== goalId);
+      setIsLoading(true);
       
-      // Use cache service to update learning goals
-      await updateLearningGoals(user.id, updatedGoals);
-      setGoals(updatedGoals);
+      // Optimistically update UI first
+      const optimisticGoals = goals.filter(goal => goal.id !== goalId);
+      setGoals(optimisticGoals);
+      
+      // Delete in the background
+      await deleteGoalById(user.id, goals, goalId);
+      setError(null);
     } catch (error) {
       console.error('Error deleting goal:', error);
       setError('Failed to delete goal');
+      // Revert optimistic update if it failed
+      loadGoals();
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -165,14 +175,11 @@ const LearningGoals = () => {
       </div>
       <div className="bg-white rounded-lg shadow-md p-6">
         <div className="flex justify-between items-center mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Learning Goals</h1>
-            <p className="text-gray-600">Set and track your AI learning journey</p>
-          </div>
           {goals.length < 3 && (
             <button
               onClick={() => setIsAddingGoal(true)}
               className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              disabled={isLoading}
             >
               <Plus className="h-5 w-5 mr-2" />
               Add Goal
@@ -274,15 +281,17 @@ const LearningGoals = () => {
                 <button
                   onClick={() => setIsAddingGoal(false)}
                   className="px-4 py-2 text-gray-700 hover:text-gray-900"
+                  disabled={isLoading}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAddGoal}
-                  disabled={!newGoal.title || !newGoal.description}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-400"
+                  disabled={!newGoal.title || !newGoal.description || isLoading}
+                  className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 
+                    ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
                 >
-                  Save Goal
+                  {isLoading ? 'Saving...' : 'Save Goal'}
                 </button>
               </div>
             </div>

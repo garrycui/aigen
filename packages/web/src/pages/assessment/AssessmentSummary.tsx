@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, User, Target, Sparkles } from 'lucide-react';
-import { getLatestAssessment } from '@shared/lib/assessment/assessment';
+import { getLatestAssessment, getMbtiDescription, getAiPreferenceDescription } from '@shared/lib/assessment/assessment';
 import { useAuth } from '@context/AuthContext';
 
 const AssessmentSummary = () => {
@@ -49,46 +49,7 @@ const AssessmentSummary = () => {
     
     loadAssessment();
   }, [location, navigate, user]);
-
-  const getMbtiDescription = (mbtiType: string) => {
-    const descriptions: {[key: string]: string} = {
-      'INTJ': 'Strategic and independent thinker with a focus on systems and innovation',
-      'INTP': 'Logical and curious problem-solver who enjoys theoretical analysis',
-      'ENTJ': 'Decisive leader who excels at organizing people and resources',
-      'ENTP': 'Innovative explorer who enjoys debating ideas and possibilities',
-      'INFJ': 'Insightful and principled visionary who values meaningful connections',
-      'INFP': 'Idealistic and compassionate with strong personal values',
-      'ENFJ': 'Charismatic mentor who brings out the best in others',
-      'ENFP': 'Enthusiastic and creative connector who values authenticity',
-      'ISTJ': 'Practical and fact-oriented organizer who values reliability',
-      'ISFJ': 'Devoted caretaker who enjoys creating order and security',
-      'ESTJ': 'Efficient organizer who values tradition and clear standards',
-      'ESFJ': 'Warm and conscientious community builder who values harmony',
-      'ISTP': 'Practical problem-solver who excels in troubleshooting',
-      'ISFP': 'Gentle creator who values aesthetics and authenticity',
-      'ESTP': 'Energetic problem-solver who thrives on action and variety',
-      'ESFP': 'Enthusiastic collaborator who brings joy to shared experiences'
-    };
-    
-    // Handle partial MBTI types (with some dimensions as '_')
-    if (mbtiType.includes('_')) {
-      return 'Your personality profile is taking shape. Complete any missing dimensions in a future assessment.';
-    }
-    
-    return descriptions[mbtiType] || 'Analytical and thoughtful individual with a unique perspective on the world';
-  };
   
-  const getAiPreferenceDescription = (aiPreference: string) => {
-    const descriptions: {[key: string]: string} = {
-      'enthusiastic': 'You embrace AI technologies with excitement and are eager to explore their full potential.',
-      'optimistic': 'You see the positive aspects of AI and are open to integrating it into your life and work.',
-      'cautious': 'You approach AI with careful consideration, weighing benefits against potential concerns.',
-      'resistant': 'You prefer a measured approach to AI adoption, focusing on proven applications.'
-    };
-    
-    return descriptions[aiPreference] || 'You have a balanced approach to AI technologies';
-  };
-
   if (isLoading) {
     return <div className="p-8 text-center">Loading your assessment results...</div>;
   }

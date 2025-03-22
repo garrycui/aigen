@@ -933,3 +933,248 @@ const enhanceMeditationScript = (script: string): string => {
   
   return enhanced;
 };
+
+/* ------------------------------------------------------------------
+   MOVED OPENAI-RELATED TUTORIAL FUNCTIONS FROM tutorials.ts
+   ------------------------------------------------------------------ */
+
+/**
+ * Build the tutorial prompt based on query, difficulty, MBTI, etc.
+ * (Formerly generateTutorialPrompt in tutorials.ts)
+ */
+export const generateTutorialPrompt = (
+  query: string,
+  difficulty: string,
+  mbtiType?: string,
+  aiPreference?: string
+): string => {
+  const difficultyGuides = {
+    beginner: {
+      style: 'Use simple language and explain every concept from scratch. Break down complex terms.',
+      depth: 'Focus on foundational concepts and basic practical applications.',
+      examples: 'Provide many step-by-step examples with detailed explanations.',
+      assumptions: 'Assume no prior knowledge of the subject.',
+      codeStyle: 'Include basic code examples with extensive comments explaining each line.'
+    },
+    intermediate: {
+      style: 'Use professional terminology with clear explanations. Balance theory and practice.',
+      depth: 'Cover moderately complex concepts and real-world applications.',
+      examples: 'Provide practical examples that build upon basic knowledge.',
+      assumptions: 'Assume basic understanding of the subject.',
+      codeStyle: 'Include moderate complexity code examples with focused comments on key concepts.'
+    },
+    advanced: {
+      style: 'Use technical language and industry-standard terminology.',
+      depth: 'Explore advanced concepts, edge cases, and optimizations.',
+      examples: 'Provide complex, real-world examples and best practices.',
+      assumptions: 'Assume strong foundational knowledge.',
+      codeStyle: 'Include advanced code examples with comments on sophisticated techniques.'
+    }
+  };
+
+  const normalizedDifficulty = (difficulty || '').toLowerCase() as keyof typeof difficultyGuides;
+  const guide = difficultyGuides[normalizedDifficulty] || difficultyGuides.beginner;
+
+  return `
+    Create a detailed, ${normalizedDifficulty}-level tutorial about "${query}" for someone with MBTI type ${mbtiType || 'unknown'} 
+    (Do Not Explicitly Mention MBTI, but Apply in Content Approach)
+    who is ${aiPreference || 'learning about'} AI.
+
+    Writing Style:
+    ${guide.style}
+
+    Content Depth:
+    ${guide.depth}
+
+    Examples Approach:
+    ${guide.examples}
+
+    Knowledge Assumptions:
+    ${guide.assumptions}
+
+    Code Examples:
+    ${guide.codeStyle}
+
+    The tutorial should include:
+    1. A clear, engaging title appropriate for ${normalizedDifficulty} level
+    2. Brief introduction explaining the importance/relevance
+    3. Prerequisites or required tools (aligned with ${normalizedDifficulty} level)
+    4. Step-by-step instructions with detailed explanations
+    5. Best practices and tips
+    6. Common pitfalls to avoid
+    7. Troubleshooting guide
+    8. Summary and next steps for further learning
+
+    Format the content using markdown with clear section headers (##).
+    Make steps clear and actionable.
+    Include specific examples where appropriate.
+    If code is involved, wrap it in markdown code blocks with language specification.
+   
+    Target a reading time of:
+    - Beginner: 15-20 minutes
+    - Intermediate: 12-15 minutes
+    - Advanced: 10-12 minutes
+
+    Make the tutorial visually appealing and easy to follow while maintaining the appropriate difficulty level.
+    Ensure high-quality, in-depth explanations that match the selected difficulty level.
+  `;
+};
+
+/**
+ * Refine a broad topic into a specific, actionable tutorial title
+ */
+export const refineTopic = async (query: string, difficulty: string): Promise<string> => {
+  const prompt = `
+    Convert this broad topic into a specific, clear tutorial title.
+    Topic: "${query}"
+    Difficulty Level: ${difficulty}
+    Requirements:
+    - Be specific and actionable
+    - Focus on practical skills
+    - Use clear, professional language
+    - Keep it under 60 characters
+    - Match the ${difficulty} difficulty level
+    Title:
+  `;
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: 'You are a technical tutorial title generator.' },
+      { role: 'user', content: prompt }
+    ]
+  });
+
+  return completion.choices[0].message?.content?.trim() || query;
+};
+
+/**
+ * Generate a quiz for the tutorial content
+ */
+export const generateQuiz = async (content: string): Promise<{
+  questions: {
+    id: number;
+    type: string;
+    question: string;
+    options: string[];
+    correctAnswer: number;
+    explanation: string;
+  }[];
+  passingScore: number;
+}> => {
+  const prompt = `
+    Generate a quiz based on this tutorial content:
+    "${content}"
+    Requirements:
+    - Create 5 multiple-choice questions
+    - Each question should have 4 options
+    - Include explanations for correct answers
+    - Focus on key learning points
+    Format as JSON with structure:
+    {
+      "questions": [
+        {
+          "id": number,
+          "type": "multiple-choice",
+          "question": string,
+          "options": string[],
+          "correctAnswer": number,
+          "explanation": string
+        }
+      ],
+      "passingScore": number
+    }
+  `;
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: 'You are a quiz generator for technical tutorials.' },
+      { role: 'user', content: prompt }
+    ]
+  });
+
+  try {
+    let jsonContent = completion.choices[0].message?.content || '{"questions":[],"passingScore":70}';
+    // Remove wrapping ```json ... ``` if present
+    jsonContent = jsonContent.replace(/```json\s*([\s\S]*?)\s*```/i, '$1').trim();
+    return JSON.parse(jsonContent);
+  } catch (error) {
+    console.error('Error parsing quiz JSON:', error);
+    return { questions: [], passingScore: 70 };
+  }
+};
+
+/**
+ * Determine the tutorial category based on title and content
+ * We pass in the available categories to avoid circular imports
+ */
+export const determineCategory = async (
+  title: string,
+  content: string,
+  categories: string[]
+): Promise<string> => {
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      {
+        role: 'system',
+        content: `Return ONLY one of the following categories exactly (without any additional text): ${categories.join(', ')}.`
+      },
+      {
+        role: 'user',
+        content: `Title: ${title}\n\nContent: ${content}`
+      }
+    ]
+  });
+
+  let categoryResponse = (completion.choices?.[0]?.message?.content ?? '').trim();
+  if (!categories.includes(categoryResponse)) {
+    categoryResponse = categories.find(cat => categoryResponse.includes(cat)) || categories[0];
+  }
+  return categoryResponse;
+};
+
+/**
+ * Generate the main tutorial content by calling OpenAI with a custom prompt
+ * The prompt builder (e.g. generateTutorialPrompt) is passed in to keep it flexible
+ */
+export const generateTutorialContent = async ({
+  refinedTitle,
+  difficulty,
+  mbtiType,
+  aiPreference,
+  promptBuilder
+}: {
+  refinedTitle: string;
+  difficulty: string;
+  mbtiType?: string;
+  aiPreference?: string;
+  promptBuilder: (
+    query: string,
+    difficulty: string,
+    mbtiType?: string,
+    aiPreference?: string
+  ) => string;
+}): Promise<string> => {
+  const prompt = promptBuilder(refinedTitle, difficulty, mbtiType, aiPreference);
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      {
+        role: 'system',
+        content: 'You are an expert AI adaptation coach creating tutorials.'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ]
+  });
+
+  const content = completion.choices[0].message?.content;
+  if (!content) throw new Error('Failed to generate tutorial content');
+
+  return content;
+};

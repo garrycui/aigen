@@ -1,24 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { fetchPosts, searchPosts, toggleLike } from '@shared/lib/post/post';
-import { forumCache } from '@shared/lib/common/cache'; // Import the cache
+import { 
+  fetchPosts, 
+  searchPosts, 
+  handlePostLike, 
+  formatTimeAgo, 
+  PostData,
+  toggleLike,
+  optimisticLikeToggle // Add this import
+} from '@shared/lib/post/post';
+import { forumCache } from '@shared/lib/common/cache';
 import { useAuth } from '@context/AuthContext';
 import { MessageSquare, ThumbsUp } from 'lucide-react';
 
-interface Post {
-  id: string;
-  title: string;
-  content: string;
-  category: string;
-  image_url?: string;
-  video_url?: string;
-  likes_count: number;
-  comments_count: number;
-  createdAt: any;
-  user_name: string;
-  user_id: string;
-  is_liked?: boolean;
-}
+// Remove the local Post interface and use PostData instead
 
 interface ForumListProps {
   searchQuery?: string;
@@ -33,7 +28,7 @@ const ForumList: React.FC<ForumListProps> = ({
 }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<PostData[]>([]); // Changed to PostData
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(page);
@@ -68,32 +63,11 @@ const ForumList: React.FC<ForumListProps> = ({
           lastVisibleId = pageHistory[currentPage - 1] || undefined;
         }
         
-        // Construct cache key
-        const cacheKey = debouncedSearchQuery 
-          ? `search-${debouncedSearchQuery}-${sortBy}-page${currentPage}`
-          : lastVisibleId
-            ? `posts-${sortBy}-after-${lastVisibleId}`
-            : `posts-${sortBy}-page${currentPage}`;
-          
-        // Check if data is available in cache
-        const cachedData = forumCache.get(cacheKey);
-        
         let response;
-        if (cachedData && cachedData.data && Array.isArray(cachedData.data)) {
-          // Validate cache response has all required fields
-          response = cachedData;
-          // Remove cache hit increment
-        } else {
-          // If not in cache or invalid, fetch from API
-          response = debouncedSearchQuery
-            ? await searchPosts(debouncedSearchQuery, sortBy, currentPage)
-            : await fetchPosts(sortBy, currentPage, lastVisibleId);
-          
-          // Only cache valid responses
-          if (response && response.data) {
-            forumCache.set(cacheKey, response);
-          }
-        }
+        // If not in cache or invalid, fetch from API
+        response = debouncedSearchQuery
+          ? await searchPosts(debouncedSearchQuery, sortBy, currentPage)
+          : await fetchPosts(sortBy, currentPage, lastVisibleId);
         
         const { data, pagination } = response;
 
@@ -106,7 +80,7 @@ const ForumList: React.FC<ForumListProps> = ({
           setHasMore(false);
         }
 
-        // Process the data as before
+        // Process the data to ensure it matches PostData interface
         const formattedData = data.map((post: Record<string, any>) => ({
           id: post.id,
           title: post.title || '',
@@ -118,11 +92,11 @@ const ForumList: React.FC<ForumListProps> = ({
           comments_count: post.comments_count,
           createdAt: post.createdAt,
           user_name: post.user_name || '',
-          user_id: post.user_id || '',
+          userId: post.user_id || post.userId || '', // Handle both field names
           is_liked: post.is_liked
         }));
         setPosts(formattedData || []);
-        setSkeletonCount(formattedData?.length || 3);
+        setSkeletonCount(data?.length || 3);
       } catch (err) {
         console.error('Error loading posts:', err);
         setError('Failed to load posts. Please try again later.');
@@ -141,62 +115,23 @@ const ForumList: React.FC<ForumListProps> = ({
       return;
     }
 
-    try {
-      // Optimistically update UI
-      setPosts(currentPosts =>
-        currentPosts.map(post =>
-          post.id === postId
-            ? {
-                ...post,
-                likes_count: post.likes_count + (post.is_liked ? -1 : 1),
-                is_liked: !post.is_liked
-              }
-            : post
-        )
-      );
-      
-      // Call API to update like status
-      const isLiked = await toggleLike('post', postId, user.id);
-      
-      // If response doesn't match our optimistic update, correct it
-      setPosts(currentPosts =>
-        currentPosts.map(post =>
-          post.id === postId
-            ? {
-                ...post,
-                likes_count: post.likes_count + (isLiked ? 1 : -1) - (post.is_liked ? 1 : 0),
-                is_liked: isLiked
-              }
-            : post
-        )
-      );
-      
-      // Only invalidate related cache entries, not all forum cache
-      const postKey = `post-${postId}`;
-      forumCache.delete(postKey);
-      
-      // Only invalidate the current page in the cache
-      const currentPageKey = debouncedSearchQuery 
-        ? `search-${debouncedSearchQuery}-${sortBy}-page${currentPage}`
-        : `posts-${sortBy}-page${currentPage}`;
-      
-      forumCache.delete(currentPageKey);
-      
-    } catch (error) {
-      console.error('Error toggling like:', error);
-      // Revert optimistic update on error
-      setPosts(currentPosts =>
-        currentPosts.map(post =>
-          post.id === postId
-            ? {
-                ...post,
-                likes_count: post.likes_count + (post.is_liked ? 1 : -1),
-                is_liked: !post.is_liked
-              }
-            : post
-        )
-      );
-    }
+    // Find the post to update
+    const postToUpdate = posts.find(p => p.id === postId);
+    if (!postToUpdate) return;
+
+    // Use shared optimistic like toggle function
+    await optimisticLikeToggle(
+      postToUpdate,
+      (updatedPost) => {
+        if (!updatedPost) return;
+        setPosts(currentPosts =>
+          currentPosts.map(post =>
+            post.id === postId ? updatedPost : post
+          )
+        );
+      },
+      () => toggleLike('post', postId, user.id)
+    );
   };
 
   // Skeleton loader component for better UX during loading
@@ -363,72 +298,3 @@ const ForumList: React.FC<ForumListProps> = ({
 };
 
 export default ForumList;
-
-const formatTimeAgo = (timestamp: any) => {
-  if (!timestamp) return '';
-  
-  let date;
-  try {
-    // Handle Firestore Timestamp objects
-    if (timestamp?.toDate) {
-      date = timestamp.toDate();
-    }
-    // Handle serialized Firestore timestamps (with seconds and nanoseconds)
-    else if (timestamp?.seconds !== undefined && timestamp?.nanoseconds !== undefined) {
-      // Convert seconds to milliseconds for JavaScript Date
-      date = new Date(timestamp.seconds * 1000);
-    }
-    // Handle other timestamp formats
-    else if (typeof timestamp === 'string') {
-      date = new Date(timestamp);
-    }
-    else if (typeof timestamp === 'number') {
-      date = new Date(timestamp);
-    }
-    else if (timestamp instanceof Date) {
-      date = timestamp;
-    }
-    else {
-      date = new Date(timestamp);
-    }
-    
-    // Additional validation for future dates (possible timezone issues)
-    if (date > new Date(Date.now() + 86400000)) { // More than 1 day in the future
-      console.warn('Future date detected, may be incorrect:', timestamp);
-      return 'Recently';
-    }
-    
-    // Check if date is valid
-    if (isNaN(date.getTime())) {
-      console.warn('Invalid date encountered:', timestamp);
-      return 'Date unavailable';
-    }
-    
-    const now = new Date();
-    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-    
-    if (diffInSeconds < 60) {
-      return 'just now';
-    }
-    
-    const diffInMinutes = Math.floor(diffInSeconds / 60);
-    if (diffInMinutes < 60) {
-      return `${diffInMinutes}m ago`;
-    }
-    
-    const diffInHours = Math.floor(diffInMinutes / 60);
-    if (diffInHours < 24) {
-      return `${diffInHours}h ago`;
-    }
-    
-    const diffInDays = Math.floor(diffInHours / 24);
-    if (diffInDays < 7) {
-      return `${diffInDays}d ago`;
-    }
-    
-    return date.toLocaleDateString();
-  } catch (error) {
-    console.error("Error formatting date:", error, timestamp);
-    return 'Date unavailable';
-  }
-};

@@ -2,128 +2,8 @@ import { useState } from 'react';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
-import { saveAssessment } from '@shared/lib/assessment/assessment';
-
-type MBTIQuestion = {
-  id: number;
-  dimension: string;
-  text: string;
-  options: [string, string];
-  descriptions: [string, string];
-};
-
-type AIQuestion = {
-  id: number;
-  text: string;
-  options: string[];
-};
-
-const mbtiQuestions: MBTIQuestion[] = [
-  {
-    id: 1,
-    dimension: "E/I",
-    text: "How do you prefer to interact with the world and recharge?",
-    options: ["Extraversion (E)", "Introversion (I)"],
-    descriptions: [
-      "Gain energy from social interaction and external activities",
-      "Gain energy from solitude and internal reflection"
-    ]
-  },
-  {
-    id: 2,
-    dimension: "S/N",
-    text: "How do you prefer to take in information?",
-    options: ["Sensing (S)", "Intuition (N)"],
-    descriptions: [
-      "Focus on concrete facts and present reality",
-      "Focus on patterns, possibilities, and future potential"
-    ]
-  },
-  {
-    id: 3,
-    dimension: "T/F",
-    text: "How do you prefer to make decisions?",
-    options: ["Thinking (T)", "Feeling (F)"],
-    descriptions: [
-      "Base decisions on logic and objective analysis",
-      "Base decisions on values and personal impact"
-    ]
-  },
-  {
-    id: 4,
-    dimension: "J/P",
-    text: "How do you prefer to organize your life?",
-    options: ["Judging (J)", "Perceiving (P)"],
-    descriptions: [
-      "Prefer structure, planning, and firm decisions",
-      "Prefer flexibility, spontaneity, and keeping options open"
-    ]
-  }
-];
-
-const aiQuestions: AIQuestion[] = [
-  {
-    id: 5,
-    text: "When introduced to a new AI tool at work, what's your typical response?",
-    options: [
-      "Dive right in and experiment",
-      "Wait for a training session",
-      "Watch colleagues use it first",
-      "Prefer to avoid using it unless necessary"
-    ]
-  },
-  {
-    id: 6,
-    text: "How do you feel about AI's impact on your industry?",
-    options: [
-      "Excited about the possibilities",
-      "Cautiously optimistic",
-      "Somewhat concerned",
-      "Very worried"
-    ]
-  },
-  {
-    id: 7,
-    text: "Which best describes your current lifestyle or work style?",
-    options: [
-      "Student / Academic",
-      "Creative professional",
-      "Corporate / Office-based role",
-      "Freelancer / Self-employed",
-      "Technical professional (engineering, development, etc.)",
-      "Non-technical professional (marketing, sales, etc.)",
-      "Unemployed / In career transition",
-      "Retired",
-      "Other (please specify)"
-    ]
-  },
-  {
-    id: 8,
-    text: "What do you most want to accomplish with AI right now?",
-    options: [
-      "Boost productivity and efficiency",
-      "Enhance creativity and innovation",
-      "Learn new skills and capabilities",
-      "Automate repetitive tasks",
-      "Stay informed about AI developments",
-      "Just exploring what's possible",
-      "Other (please specify)"
-    ]
-  },
-  {
-    id: 9,
-    text: "Which potential features would be most valuable to you?",
-    options: [
-      "Personalized AI learning paths",
-      "AI mental wellness coaching",
-      "Advanced content generation tools",
-      "Industry-specific AI tutorials",
-      "Community of like-minded learners",
-      "One-on-one AI adaptation coaching",
-      "Other (please specify)"
-    ]
-  }
-];
+import { saveAssessment, mbtiQuestions, aiQuestions, getMBTIType } from '@shared/lib/assessment/assessment';
+import type { MBTIQuestion, AIQuestion } from '@shared/lib/assessment/assessment';
 
 const Questionnaire = () => {
   const navigate = useNavigate();
@@ -135,26 +15,6 @@ const Questionnaire = () => {
   const allQuestions = [...mbtiQuestions, ...aiQuestions];
   const currentQuestionData = allQuestions[currentQuestion];
   const isMBTIQuestion = currentQuestion < mbtiQuestions.length;
-
-  const getMBTIType = () => {
-    const mbtiParts = {
-      E: answers[1]?.includes('(E)') ? 'E' : undefined,
-      I: answers[1]?.includes('(I)') ? 'I' : undefined,
-      S: answers[2]?.includes('(S)') ? 'S' : undefined,
-      N: answers[2]?.includes('(N)') ? 'N' : undefined,
-      T: answers[3]?.includes('(T)') ? 'T' : undefined,
-      F: answers[3]?.includes('(F)') ? 'F' : undefined,
-      J: answers[4]?.includes('(J)') ? 'J' : undefined,
-      P: answers[4]?.includes('(P)') ? 'P' : undefined,
-    };
-
-    return (
-      (mbtiParts.E || mbtiParts.I || '_') +
-      (mbtiParts.S || mbtiParts.N || '_') +
-      (mbtiParts.T || mbtiParts.F || '_') +
-      (mbtiParts.J || mbtiParts.P || '_')
-    );
-  };
 
   const handleAnswer = (answer: string) => {
     setAnswers(prev => ({
@@ -198,7 +58,7 @@ const Questionnaire = () => {
         throw new Error('Not authenticated');
       }
 
-      const mbtiType = getMBTIType();
+      const mbtiType = getMBTIType(answers);
       
       // Include custom answers for "Other" options
       const processedAnswers = Object.entries(answers).map(([id, answer]) => {
@@ -239,7 +99,7 @@ const Questionnaire = () => {
   };
 
   const renderMBTIPreview = () => {
-    const mbtiType = getMBTIType();
+    const mbtiType = getMBTIType(answers);
     const dimensions = [
       { label: 'Extraversion/Introversion', value: mbtiType[0] },
       { label: 'Sensing/Intuition', value: mbtiType[1] },

@@ -5,6 +5,35 @@ import {
   improvementCache, invalidateImprovementCache
 } from '../common/cache'; // Import additional cache functions
 
+// New interface for progress data
+export interface UserProgress {
+  assessment: boolean;
+  goals: {
+    total: number;
+    completed: number;
+  };
+  tutorials: {
+    total: number;
+    completed: number;
+  };
+  posts: {
+    total: number;
+    published: number;
+  };
+}
+
+// New function to calculate total progress
+export const calculateTotalProgress = (progress: UserProgress): number => {
+  return Math.round(
+    ((progress.assessment ? 1 : 0) +
+      (progress.goals.completed / Math.max(progress.goals.total, 1)) +
+      (progress.tutorials.completed / Math.max(progress.tutorials.total, 1)) +
+      (progress.posts.published / Math.max(progress.posts.total, 1))) /
+      4 *
+      100
+  );
+};
+
 interface MonthlyProgress {
   month: string;
   completedTutorials: number;

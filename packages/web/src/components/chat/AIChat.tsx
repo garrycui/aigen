@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { Send, RefreshCw, Clock, ChevronDown, ChevronRight, Trash2, MessageSquare } from 'lucide-react';
 import { useAuth } from '@context/AuthContext';
 import { 
@@ -8,23 +8,114 @@ import {
   deleteSession,
   getSessionMessages,
   processChatWithSession,
-  clearAllChatHistory 
+  clearAllChatHistory,
+  runChatMaintenance,
+  getPaginatedSessionMessages,
+  updateLastActiveTime,
+  checkIfStaleChat,
+  formatSessionDate,
+  getSentimentClass
 } from '@shared/lib/chat/chat';
+import { ChatSession } from '@shared/lib/chat/sessionManager';
 import AIChatCard from './AIChatCard';
 
 // Constants for chat management
-const STALE_CHAT_THRESHOLD = 6 * 60 * 60 * 1000; // 6 hours before a chat is considered "stale"
-const LOCAL_STORAGE_KEY_PREFIX = 'aigen_chat_last_active_';
-// Add constant for auto-creation of new sessions
-const AUTO_CREATE_NEW_SESSION = true; // Toggle for auto session creation feature
+// Toggle for auto session creation feature
+const AUTO_CREATE_NEW_SESSION = true;
 
-// Interface for chat sessions
-interface ChatSession {
-  id: string;
-  title: string;
-  createdAt: string;
-  lastActiveAt: string;
+// Define types for the message component
+interface ChatMessageType {
+  content: string;
+  role: 'user' | 'assistant';
+  sentiment?: 'positive' | 'negative' | 'neutral';
+  timestamp?: string;
+  recommendations?: { id: string; title: string; content: string; type?: 'post' | 'tutorial' }[];
 }
+
+interface ChatMessageProps {
+  message: ChatMessageType;
+  isAnimating: boolean;
+  animatedText: string;
+  index: number;
+  animatingMessageIndex: number | null;
+  getSentimentColor: (sentiment?: string) => string;
+  handleContentClick: (id: string, type: 'post' | 'tutorial') => void;
+  showRecommendations?: boolean;
+  animationQueue?: number[]; // Add this type
+}
+
+// Memoized message component for performance optimization
+const ChatMessage = memo(({
+  message,
+  isAnimating,
+  animatedText,
+  index,
+  animatingMessageIndex,
+  getSentimentColor,
+  handleContentClick,
+  showRecommendations = true,
+  animationQueue = [] // Add this new prop
+}: ChatMessageProps & { showRecommendations?: boolean }) => {
+  const shouldShowRecommendations = showRecommendations && 
+    message.recommendations && 
+    message.recommendations.length > 0;
+  
+  // Check if this message is waiting in the animation queue
+  const isQueued = animationQueue.includes(index);
+  
+  // For assistant messages that are queued for animation but not currently animating,
+  // we should show an empty bubble with a pulsing indicator
+  const isQueuedForAnimation = message.role === 'assistant' && isQueued;
+  
+  return (
+    <div 
+      className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'} animate-fade-in`}
+    >
+      <div
+        className={`max-w-[80%] p-4 rounded-lg border shadow-sm ${getSentimentColor(message.sentiment)}`}
+        style={{ whiteSpace: 'pre-wrap' }}
+      >
+        {message.role === 'assistant' && index === animatingMessageIndex ? (
+          // Currently animating message
+          <>
+            <span dangerouslySetInnerHTML={{ __html: animatedText.replace(/\n/g, '<br/>') }} />
+            <span className="typing-cursor">|</span>
+          </>
+        ) : isQueuedForAnimation ? (
+          // Message is queued for animation - show waiting indicator
+          <span className="inline-flex"><span className="dot-typing"></span></span>
+        ) : (
+          // Regular message display (or completed animation)
+          <span dangerouslySetInnerHTML={{ __html: message.content }} />
+        )}
+      </div>
+      <span className="text-xs text-gray-500 mt-1">
+        {message.timestamp ? new Date(message.timestamp).toLocaleTimeString() : ''}
+      </span>
+      
+      {shouldShowRecommendations && !isQueuedForAnimation && message.recommendations && (
+        <div className="mt-4 space-y-4 w-full max-w-[95%] animate-fade-in">
+          {message.recommendations.map(rec => (
+            <AIChatCard
+              key={rec.id}
+              item={{
+                id: rec.id,
+                title: rec.title,
+                content: rec.content,
+                type: rec.type || 'tutorial'
+              }}
+              onClick={handleContentClick}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
+// Add the missing message formatting functions at the top of the file
+const formatMessage = (content: string): string => content.replace(/\n/g, '<br/>');
+const unformatMessage = (content: string): string => content.replace(/<br\/>/g, '\n');
 
 const AIChat = () => {
   const { user } = useAuth();
@@ -55,32 +146,29 @@ const AIChat = () => {
   const [showSessionDrawer, setShowSessionDrawer] = useState(false);
   const [showArchivedSessions, setShowArchivedSessions] = useState(false);
 
-  // Update the last activity time
-  const updateLastActiveTime = (sessionId: string) => {
-    try {
-      localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${sessionId}`, Date.now().toString());
-    } catch (error) {
-      console.error('Error updating last active time:', error);
-    }
-  };
+  // Add state for pagination support
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isFetchingMoreMessages, setIsFetchingMoreMessages] = useState(false);
 
-  // Check if the chat is stale based on last activity time
-  const checkIfStaleChat = (sessionId: string) => {
-    try {
-      const lastActiveTime = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}${sessionId}`);
-      if (!lastActiveTime) return false;
-      
-      const lastActive = parseInt(lastActiveTime, 10);
-      const now = Date.now();
-      
-      return (now - lastActive) > STALE_CHAT_THRESHOLD;
-    } catch (error) {
-      return false; // If there's any error, don't consider it stale
-    }
-  };
+  // Add state for tracking animation completion
+  const [animationComplete, setAnimationComplete] = useState(true); 
+  const [recommendationsReady, setRecommendationsReady] = useState(false);
+  const [hasLearningIntent, setHasLearningIntent] = useState(false);
+  const [animationQueue, setAnimationQueue] = useState<number[]>([]);
 
-  // Create a new chat session
-  const handleNewChat = async () => {
+  // Use memoized callbacks for better performance
+  const getSentimentColor = useCallback((sentiment?: string) => {
+    return getSentimentClass(sentiment);
+  }, []);
+
+  const handleContentClick = useCallback((id: string, type: 'post' | 'tutorial') => {
+    const path = type === 'post' ? `/forum/${id}` : `/tutorials/${id}`;
+    window.location.href = path;
+  }, []);
+
+  // Create a new chat session with optimized handling
+  const handleNewChat = useCallback(async () => {
     if (!user || isLoading) return;
     
     setIsLoading(true);
@@ -88,6 +176,8 @@ const AIChat = () => {
       const newSessionId = await createNewSession(user.id);
       setCurrentSessionId(newSessionId);
       setMessages([]);
+      setCurrentPage(1);
+      setTotalPages(1);
       
       // Update session lists
       const { activeSessions, archivedSessions } = await getUserSessions(user.id);
@@ -102,12 +192,19 @@ const AIChat = () => {
       
       // Update last active time
       updateLastActiveTime(newSessionId);
+      
+      // Run maintenance tasks in the background
+      setTimeout(() => {
+        if (user?.id) {
+          runChatMaintenance(user.id).catch(console.error);
+        }
+      }, 2000);
     } catch (error) {
       console.error('Error creating new chat:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user, isLoading]);
 
   // Switch to a different session
   const handleSwitchSession = async (sessionId: string) => {
@@ -123,7 +220,7 @@ const AIChat = () => {
       
       if (messages.length > 0) {
         const formattedMessages = messages.map(msg => ({
-          content: msg.content.replace(/\n/g, '<br/>'),
+          content: formatMessage(msg.content),
           role: msg.role,
           sentiment: msg.sentiment,
           timestamp: msg.timestamp
@@ -183,7 +280,7 @@ const AIChat = () => {
           // Load messages for the new current session
           const messages = await getSessionMessages(user.id, newCurrentId);
           const formattedMessages = messages.map(msg => ({
-            content: msg.content.replace(/\n/g, '<br/>'),
+            content: formatMessage(msg.content),
             role: msg.role,
             sentiment: msg.sentiment,
             timestamp: msg.timestamp
@@ -234,6 +331,37 @@ const AIChat = () => {
     }
   };
 
+  // Load more messages (pagination support)
+  const handleLoadMoreMessages = useCallback(async () => {
+    if (!user || !currentSessionId || isLoading || isFetchingMoreMessages || currentPage <= 1) return;
+    
+    setIsFetchingMoreMessages(true);
+    try {
+      // Get the previous page of messages
+      const prevPage = currentPage - 1;
+      const { messages: olderMessages } = await getPaginatedSessionMessages(
+        user.id, currentSessionId, prevPage, 20
+      );
+      
+      if (olderMessages?.length) {
+        const formattedOlderMessages = olderMessages.map(msg => ({
+          content: formatMessage(msg.content),
+          role: msg.role,
+          sentiment: msg.sentiment,
+          timestamp: msg.timestamp
+        }));
+        
+        // Prepend older messages
+        setMessages(prev => [...formattedOlderMessages, ...prev]);
+        setCurrentPage(prevPage);
+      }
+    } catch (error) {
+      console.error('Error loading more messages:', error);
+    } finally {
+      setIsFetchingMoreMessages(false);
+    }
+  }, [user, currentSessionId, isLoading, isFetchingMoreMessages, currentPage]);
+
   // Load sessions and messages when component mounts
   useEffect(() => {
     if (user) {
@@ -254,13 +382,25 @@ const AIChat = () => {
             const isStale = checkIfStaleChat(currentSessionId);
             setShowNewChatPrompt(isStale);
             
-            // Get messages for current session
-            const messages = await getSessionMessages(user.id, currentSessionId);
+            // Get paginated messages for current session (just the most recent page)
+            const { 
+              messages, 
+              totalPages,
+              currentPage 
+            } = await getPaginatedSessionMessages(
+              user.id, 
+              currentSessionId,
+              1, // Start with the most recent page
+              20 // Page size
+            );
+            
+            setCurrentPage(currentPage);
+            setTotalPages(totalPages);
             
             if (messages.length > 0) {
               setContainerHeight('h-[400px]');
               const formattedMessages = messages.map(msg => ({
-                content: msg.content.replace(/\n/g, '<br/>'),
+                content: formatMessage(msg.content),
                 role: msg.role,
                 sentiment: msg.sentiment,
                 timestamp: msg.timestamp
@@ -276,6 +416,13 @@ const AIChat = () => {
         } finally {
           setIsLoading(false);
         }
+        
+        // Run maintenance tasks in the background after a delay
+        setTimeout(() => {
+          if (user?.id) {
+            runChatMaintenance(user.id).catch(console.error);
+          }
+        }, 5000);
       };
       
       loadSessionsAndMessages();
@@ -324,165 +471,181 @@ const AIChat = () => {
 
   // Animation effect for gradually revealing AI response
   useEffect(() => {
-    if (isAnimating && animatingMessageIndex !== null && messages[animatingMessageIndex]) {
-      const fullText = messages[animatingMessageIndex].content.replace(/<br\/>/g, '\n');
+    if (!isAnimating || animatingMessageIndex === null || !messages[animatingMessageIndex]) return;
+
+    const fullText = unformatMessage(messages[animatingMessageIndex].content);
+    
+    if (animatedText.length < fullText.length) {
+      // Still animating - show more text
+      const timeout = setTimeout(() => {
+        const nextChunkSize = Math.floor(Math.random() * 3) + 1;
+        setAnimatedText(fullText.slice(0, animatedText.length + nextChunkSize));
+      }, animationSpeed);
       
-      if (animatedText.length < fullText.length) {
-        const timeout = setTimeout(() => {
-          // Add a few characters at a time for smoother animation
-          const nextChunkSize = Math.floor(Math.random() * 3) + 1; // 1-3 characters
-          const nextText = fullText.slice(0, animatedText.length + nextChunkSize);
-          setAnimatedText(nextText);
-        }, animationSpeed);
-        
-        return () => clearTimeout(timeout);
-      } else {
-        // Animation complete
-        setIsAnimating(false);
-        setAnimatingMessageIndex(null);
-        setAnimatedText('');
-      }
+      return () => clearTimeout(timeout);
     }
+    
+    // Animation complete - check queue
+    finishCurrentAnimation();
   }, [isAnimating, animatingMessageIndex, animatedText, messages, animationSpeed]);
+
+  // Extract animation completion function to reuse
+  const finishCurrentAnimation = useCallback(() => {
+    setIsAnimating(false);
+    setAnimatingMessageIndex(null);
+    setAnimatedText('');
+    
+    if (animationQueue.length > 0) {
+      // Start next animation after delay
+      setTimeout(() => {
+        const nextIndex = animationQueue[0];
+        const remainingQueue = animationQueue.slice(1);
+        setAnimationQueue(remainingQueue);
+        setAnimatingMessageIndex(nextIndex);
+        setAnimatedText('');
+        setIsAnimating(true);
+      }, 300);
+    } else {
+      // All done - show recommendations if needed
+      setAnimationComplete(true);
+      if (hasLearningIntent) setRecommendationsReady(true);
+    }
+  }, [animationQueue, hasLearningIntent]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !user || !currentSessionId || isLoading) return;
-
-    // Create new session if current one is stale
-    if ((showNewChatPrompt || isStaleChat) && AUTO_CREATE_NEW_SESSION) {
-      await handleNewChat();
-      // Store the message to use after new session is created
-      const pendingMessage = input;
-      setInput('');
-      
-      // Wait a bit for the new session creation to complete
-      setTimeout(async () => {
-        setInput(pendingMessage);
-        // Submit after new session is ready
-        const newForm = document.querySelector('form');
-        if (newForm) newForm.dispatchEvent(new Event('submit', { cancelable: true }));
-      }, 300);
-      
+    if (!validateInputs()) return;
+    
+    // Handle stale chat
+    if (checkIfStaleChatActive()) {
+      await handleStaleChat();
       return;
     }
 
+    const timestamp = new Date().toISOString();
+    const userMessage = input;
+    prepareForSubmission(timestamp, userMessage);
+
+    try {
+      const result = await processChatWithSession(user!.id, currentSessionId, userMessage);
+      handleSuccessResponse(result, timestamp, userMessage);
+    } catch (error) {
+      handleErrorResponse(error);
+    } finally {
+      completeSubmission();
+    }
+  };
+
+  // Fix the validateInputs function
+  const validateInputs = (): boolean => {
+    if (!input.trim() || !user || !currentSessionId || isLoading) return false;
+    return true;
+  };
+
+  // Fix the isStaleChat function to return a boolean
+  const checkIfStaleChatActive = (): boolean => {
+    return !!(showNewChatPrompt || isStaleChat) && AUTO_CREATE_NEW_SESSION;
+  };
+
+  // Fix the handleStaleChat function
+  const handleStaleChat = async (): Promise<void> => {
+    if (!user) return;
+    await handleNewChat();
+    const pendingMessage = input;
+    setInput('');
+    setTimeout(async () => {
+      setInput(pendingMessage);
+      const newForm = document.querySelector('form');
+      if (newForm) newForm.dispatchEvent(new Event('submit', { cancelable: true }));
+    }, 300);
+  };
+
+  // Fix the prepareForSubmission function
+  const prepareForSubmission = (timestamp: string, userMessage: string): void => {
+    setInput('');
+    setIsLoading(true);
+    updateLastActiveTime(currentSessionId);
+    
     // Hide new chat prompt if it's showing
     if (showNewChatPrompt) {
       setShowNewChatPrompt(false);
     }
-    if (isStaleChat) {
-      setIsStaleChat(false);
-    }
+    setIsStaleChat(false);
     
-    // Update last active time
-    updateLastActiveTime(currentSessionId);
-
-    const timestamp = new Date().toISOString();
-    const message = input;
-    setInput('');
-    setIsLoading(true);
-
-    // Show user message immediately
-    setMessages(prev => [...prev, { content: message, role: 'user', timestamp }]);
-    
-    // Add a small delay and show thinking indicator to make it feel more human
+    setMessages(prev => [...prev, { content: formatMessage(userMessage), role: 'user', timestamp }]);
     setTimeout(() => setIsThinking(true), 500);
+    
+    setRecommendationsReady(false);
+    setHasLearningIntent(false);
+    setAnimationComplete(false);
+  };
 
-    try {
-      // Use session-based processing
-      const result = await processChatWithSession(user.id, currentSessionId, message);
-      const responses = Array.isArray(result) ? result : [result];
-      
-      const newMessages = responses.map((res) => ({
-        content: res.response.replace(/\n/g, '<br/>'),
-        role: 'assistant' as 'assistant',
-        sentiment: res.sentiment,
-        timestamp: new Date().toISOString(),
-        recommendations: res.recommendations || []
-      }));
+  const handleSuccessResponse = async (result: any, timestamp: string, userMessage: string) => {
+    const responses = Array.isArray(result) ? result : [result];
+    const newMessages = responses.map((res) => ({
+      content: formatMessage(res.response),
+      role: 'assistant' as 'assistant',
+      sentiment: res.sentiment,
+      timestamp: new Date().toISOString(),
+      recommendations: res.recommendations || []
+    }));
 
-      // We need to update messages first, then start animation
-      setMessages(prev => {
-        const updatedMessages = [...prev];
-        if (updatedMessages.length > 0) {
-          updatedMessages[updatedMessages.length - 1] = { content: message, role: 'user', timestamp };
+    const isLearningIntent = responses.length > 1 && responses[1].recommendations?.length > 0;
+    setHasLearningIntent(isLearningIntent);
+
+    setMessages(prev => {
+      const updatedMessages = [...prev];
+      if (updatedMessages.length > 0) {
+        updatedMessages[updatedMessages.length - 1] = { content: userMessage, role: 'user', timestamp };
+      } else {
+        updatedMessages.push({ content: userMessage, role: 'user', timestamp });
+      }
+      const finalMessages = [...updatedMessages, ...newMessages];
+      setTimeout(() => {
+        if (isLearningIntent) {
+          const firstResponseIndex = finalMessages.length - newMessages.length;
+          const recommendationsMessageIndex = firstResponseIndex + 1;
+          setAnimatingMessageIndex(firstResponseIndex);
+          setAnimatedText('');
+          setIsAnimating(true);
+          setAnimationQueue([recommendationsMessageIndex]);
         } else {
-          updatedMessages.push({ content: message, role: 'user', timestamp });
-        }
-        
-        // Add the new AI messages
-        const finalMessages = [...updatedMessages, ...newMessages];
-        
-        // Start animation in the next render cycle to ensure we have the updated messages state
-        setTimeout(() => {
-          // Get index of the last AI message we want to animate
           const lastAIMessageIndex = finalMessages.length - 1;
           setAnimatingMessageIndex(lastAIMessageIndex);
           setAnimatedText('');
           setIsAnimating(true);
-        }, 50);
-        
-        return finalMessages;
-      });
-      
-      // Refresh session data to get updated titles
-      const { activeSessions, archivedSessions } = await getUserSessions(user.id);
-      setActiveSessions(activeSessions);
-      setArchivedSessions(archivedSessions);
-      
-    } catch (error) {
-      console.error('Error in chat:', error);
-      setMessages(prev => [
-        ...prev,
-        { content: 'I apologize, but I encountered an error. Please try again.', role: 'assistant', timestamp: new Date().toISOString() }
-      ]);
-    } finally {
-      setIsLoading(false);
-      setIsThinking(false);
-    }
+          setAnimationQueue([]);
+        }
+      }, 50);
+      return finalMessages;
+    });
+
+    const { activeSessions, archivedSessions } = await getUserSessions(user!.id);
+    setActiveSessions(activeSessions);
+    setArchivedSessions(archivedSessions);
   };
 
-  // Format date for display
-  const formatSessionDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    
-    // Today: Show time only
-    if (date.toDateString() === now.toDateString()) {
-      return `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    }
-    
-    // Yesterday: Show "Yesterday"
-    if (date.toDateString() === yesterday.toDateString()) {
-      return `Yesterday ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    }
-    
-    // This week: Show day of week
-    if (now.getTime() - date.getTime() < 7 * 24 * 60 * 60 * 1000) {
-      return `${date.toLocaleDateString([], { weekday: 'long' })}`;
-    }
-    
-    // Older: Show date
-    return date.toLocaleDateString();
+  const handleErrorResponse = (error: any) => {
+    console.error('Error in chat:', error);
+    setMessages(prev => [
+      ...prev,
+      { content: 'I apologize, but I encountered an error. Please try again.', role: 'assistant', timestamp: new Date().toISOString() }
+    ]);
+    setAnimationComplete(true);
   };
 
-  // Get sentiment-based background color
-  const getSentimentColor = (sentiment?: string) => {
-    switch (sentiment) {
-      case 'positive': return 'bg-green-50 border-green-200';
-      case 'negative': return 'bg-red-50 border-red-200';
-      case 'neutral': return 'bg-blue-50 border-blue-200';
-      default: return 'bg-white border-gray-200';
-    }
-  };
-
-  // Handler for content card clicks
-  const handleContentClick = (id: string, type: 'post' | 'tutorial') => {
-    const path = type === 'post' ? `/forum/${id}` : `/tutorials/${id}`;
-    window.location.href = path;
+  const completeSubmission = () => {
+    setIsLoading(false);
+    setIsThinking(false);
+    setTimeout(() => {
+      if (user?.id && currentSessionId) {
+        getPaginatedSessionMessages(user.id, currentSessionId, 1, 20)
+          .then(({ totalPages }) => {
+            setTotalPages(totalPages);
+          })
+          .catch(console.error);
+      }
+    }, 2000);
   };
 
   return (
@@ -640,6 +803,19 @@ const AIChat = () => {
             ref={chatContainerRef}
             className="flex-1 p-4 overflow-y-auto space-y-4"
           >
+            {/* Add "Load Previous Messages" button when there are more pages */}
+            {currentPage < totalPages && (
+              <div className="flex justify-center py-2">
+                <button
+                  onClick={handleLoadMoreMessages}
+                  className="px-4 py-1 text-xs bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+                  disabled={isFetchingMoreMessages}
+                >
+                  {isFetchingMoreMessages ? 'Loading...' : 'Load previous messages'}
+                </button>
+              </div>
+            )}
+
             {/* Welcome message when no messages */}
             {messages.length === 0 && !isLoading && (
               <div className="flex justify-center items-center h-full">
@@ -670,47 +846,20 @@ const AIChat = () => {
               </div>
             )}
 
-            {/* Message display */}
+            {/* Message display - now using memoized component */}
             {messages.map((message, index) => (
-              <div 
-                key={index} 
-                className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'} animate-fade-in`}
-              >
-                <div
-                  className={`max-w-[80%] p-4 rounded-lg border shadow-sm ${getSentimentColor(message.sentiment)}`}
-                  style={{ whiteSpace: 'pre-wrap' }} // Preserve whitespace
-                >
-                  {message.role === 'assistant' && index === animatingMessageIndex ? (
-                    <>
-                      {/* Display animated text for the message being animated */}
-                      <span dangerouslySetInnerHTML={{ __html: animatedText.replace(/\n/g, '<br/>') }} />
-                      <span className="typing-cursor">|</span>
-                    </>
-                  ) : (
-                    // Display full content for other messages
-                    <span dangerouslySetInnerHTML={{ __html: message.content }} />
-                  )}
-                </div>
-                <span className="text-xs text-gray-500 mt-1">
-                  {message.timestamp ? new Date(message.timestamp).toLocaleTimeString() : ''}
-                </span>
-                {message.recommendations && message.recommendations.length > 0 && (
-                  <div className="mt-4 space-y-4 w-full max-w-[95%]">
-                    {message.recommendations.map(rec => (
-                      <AIChatCard
-                        key={rec.id}
-                        item={{
-                          id: rec.id,
-                          title: rec.title,
-                          content: rec.content,
-                          type: rec.type || 'tutorial' // Default to tutorial if type not specified
-                        }}
-                        onClick={handleContentClick}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
+              <ChatMessage
+                key={`${message.role}-${index}`}
+                message={message}
+                isAnimating={isAnimating}
+                animatedText={animatedText}
+                index={index}
+                animatingMessageIndex={animatingMessageIndex}
+                getSentimentColor={getSentimentColor}
+                handleContentClick={handleContentClick}
+                showRecommendations={animationComplete && recommendationsReady}
+                animationQueue={animationQueue}
+              />
             ))}
 
             {/* Enhanced thinking indicator with animated gradient */}
@@ -815,6 +964,42 @@ const AIChat = () => {
         @keyframes blink {
           0%, 100% { opacity: 1; }
           50% { opacity: 0; }
+        }
+        
+        .dot-typing {
+          position: relative;
+          left: -9999px;
+          width: 6px;
+          height: 6px;
+          border-radius: 5px;
+          background-color: #6B7280;
+          color: #6B7280;
+          box-shadow: 9984px 0 0 0 #6B7280, 9999px 0 0 0 #6B7280, 10014px 0 0 0 #6B7280;
+          animation: dotTyping 1.5s infinite linear;
+        }
+
+        @keyframes dotTyping {
+          0% {
+            box-shadow: 9984px 0 0 0 #6B7280, 9999px 0 0 0 #6B7280, 10014px 0 0 0 #6B7280;
+          }
+          16.667% {
+            box-shadow: 9984px -10px 0 0 #6B7280, 9999px 0 0 0 #6B7280, 10014px 0 0 0 #6B7280;
+          }
+          33.333% {
+            box-shadow: 9984px 0 0 0 #6B7280, 9999px 0 0 0 #6B7280, 10014px 0 0 0 #6B7280;
+          }
+          50% {
+            box-shadow: 9984px 0 0 0 #6B7280, 9999px -10px 0 0 #6B7280, 10014px 0 0 0 #6B7280;
+          }
+          66.667% {
+            box-shadow: 9984px 0 0 0 #6B7280, 9999px 0 0 0 #6B7280, 10014px 0 0 0 #6B7280;
+          }
+          83.333% {
+            box-shadow: 9984px 0 0 0 #6B7280, 9999px 0 0 0 #6B7280, 10014px -10px 0 0 #6B7280;
+          }
+          100% {
+            box-shadow: 9984px 0 0 0 #6B7280, 9999px 0 0 0 #6B7280, 10014px 0 0 0 #6B7280;
+          }
         }
       `}</style>
     </div>

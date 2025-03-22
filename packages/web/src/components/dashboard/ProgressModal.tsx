@@ -2,38 +2,18 @@ import React from 'react';
 import { X, Target, CheckCircle, Clock, BookOpen, MessageSquare } from 'lucide-react';
 import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
+import { UserProgress, calculateTotalProgress } from '@shared/lib/dashboard/progress';
 
 interface ProgressModalProps {
   isOpen: boolean;
   onClose: () => void;
-  progress: {
-    assessment: boolean;
-    goals: {
-      total: number;
-      completed: number;
-    };
-    tutorials: {
-      total: number;
-      completed: number;
-    };
-    posts: {
-      total: number;
-      published: number;
-    };
-  };
+  progress: UserProgress;
 }
 
 const ProgressModal: React.FC<ProgressModalProps> = ({ isOpen, onClose, progress }) => {
   if (!isOpen) return null;
 
-  const totalProgress = Math.round(
-    ((progress.assessment ? 1 : 0) +
-      (progress.goals.completed / Math.max(progress.goals.total, 1)) +
-      (progress.tutorials.completed / Math.max(progress.tutorials.total, 1)) +
-      (progress.posts.published / Math.max(progress.posts.total, 1))) /
-      4 *
-      100
-  );
+  const totalProgress = calculateTotalProgress(progress);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
