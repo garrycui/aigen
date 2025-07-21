@@ -1,0 +1,7 @@
+{
+  "name": "aigen-mobile",
+  "slug": "aigen-mobile",
+  "android": {
+    "package": "com.anonymous.aigenmobile"
+  }
+}

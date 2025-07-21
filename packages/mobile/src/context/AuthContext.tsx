@@ -1,163 +1,87 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Alert } from 'react-native';
-import { 
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  updateProfile,
-  GoogleAuthProvider,
-  signInWithPopup
-} from 'firebase/auth';
-import { auth } from '@shared/common/firebase';
-import { 
-  getUserWithSubscription,
-  createUser,
-  updateUser,
-  invalidateUserCache,
-  cleanupAllSubscriptionListeners
-} from '@shared/common/cache';
-import { startTrial } from '@shared/payment/stripe';
+import { initializeApp } from 'firebase/app';
+import { getAuth, onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
-type AuthUser = {
+// Use Expo's process.env for .env variables
+const firebaseConfig = {
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
+};
+
+// Add this for debugging:
+console.log('FIREBASE CONFIG', firebaseConfig);
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+
+interface AuthUser {
   id: string;
   email: string;
   name: string;
-  // ... other user properties from shared AuthUser type
-};
+}
 
-type AuthContextType = {
+interface AuthContextType {
   user: AuthUser | null;
-  isLoading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error?: string }>;
-  signUp: (email: string, password: string, name: string) => Promise<{ error?: string }>;
-  googleSignIn: () => Promise<{ error?: string }>;
-  signOut: () => Promise<void>;
-};
+  loading: boolean;
+  signIn?: (email: string, password: string) => Promise<{ error: string | null }>;
+  signUp?: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
+}
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  loading: true,
+});
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const useAuth = () => useContext(AuthContext);
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setIsLoading(true);
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser: User | null) => {
       if (firebaseUser) {
-        try {
-          const userId = firebaseUser.uid;
-          const userData = await getUserWithSubscription(userId);
-          
-          if (userData) {
-            if (!userData.name && firebaseUser.displayName) {
-              await updateUser(userId, {
-                name: firebaseUser.displayName,
-                displayName: firebaseUser.displayName
-              });
-              userData.name = firebaseUser.displayName;
-              userData.displayName = firebaseUser.displayName;
-            }
-            setUser(userData as AuthUser);
-          } else {
-            const newUserData = {
-              email: firebaseUser.email!,
-              name: firebaseUser.displayName || '',
-              displayName: firebaseUser.displayName || '',
-              createdAt: new Date(),
-              updatedAt: new Date()
-            };
-            const createdUser = await createUser(userId, newUserData);
-            setUser(createdUser as AuthUser);
-          }
-        } catch (error) {
-          console.error('Error fetching user data:', error);
-          setUser(null);
-        }
+        setUser({
+          id: firebaseUser.uid,
+          email: firebaseUser.email!,
+          name: firebaseUser.displayName || 'User',
+        });
       } else {
         setUser(null);
       }
-      setIsLoading(false);
+      setLoading(false);
     });
 
-    return () => {
-      unsubscribe();
-      cleanupAllSubscriptionListeners();
-    };
+    return unsubscribe;
   }, []);
 
   const signIn = async (email: string, password: string) => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      return {};
+      return { error: null };
     } catch (error: any) {
-      console.error('Sign in error:', error);
-      return { error: error.message };
+      return { error: error.message || 'Login failed' };
     }
   };
 
   const signUp = async (email: string, password: string, name: string) => {
     try {
-      const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
-      
-      await updateProfile(firebaseUser, {
-        displayName: name
-      });
-
-      const userData = {
-        name: name,
-        email: email,
-        displayName: name
-      };
-
-      await createUser(firebaseUser.uid, userData);
-      await startTrial(firebaseUser.uid);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      invalidateUserCache(firebaseUser.uid);
-
-      return {};
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(userCredential.user, { displayName: name });
+      return { error: null };
     } catch (error: any) {
-      console.error('Sign up error:', error);
-      return { error: error.message };
-    }
-  };
-
-  const googleSignIn = async () => {
-    // Note: Google Sign-In requires additional setup for mobile
-    Alert.alert('Not Available', 'Google Sign-In is not available in the mobile app yet.');
-    return { error: 'Google Sign-In not available' };
-  };
-
-  const signOut = async () => {
-    try {
-      if (user) {
-        invalidateUserCache(user.id);
-      }
-      await firebaseSignOut(auth);
-      setUser(null);
-    } catch (error) {
-      console.error('Sign out error:', error);
+      return { error: error.message || 'Signup failed' };
     }
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      isLoading, 
-      signIn, 
-      signUp, 
-      googleSignIn,
-      signOut
-    }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp }}>
       {children}
     </AuthContext.Provider>
   );
-};
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
+}

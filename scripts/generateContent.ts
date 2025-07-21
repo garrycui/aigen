@@ -3,7 +3,7 @@ import cron from 'node-cron';
 import { config } from 'dotenv';
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { CONTENT_CATEGORIES, generateContent, publishContent } from '../src/lib/post/contentGenerator.ts';
+import { CONTENT_CATEGORIES, generateContent, publishContent } from '../packages/shared/src/lib/post/contentGenerator.ts';
 
 config();
 
