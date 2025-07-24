@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
+// Fix the import path
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
 // Use Expo's process.env for .env variables
 const firebaseConfig = {
@@ -18,11 +21,15 @@ console.log('FIREBASE CONFIG', firebaseConfig);
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db = getFirestore(app);
 
 interface AuthUser {
   id: string;
   email: string;
   name: string;
+  hasCompletedAssessment?: boolean;
+  mbtiType?: string;
+  aiPreference?: string;
 }
 
 interface AuthContextType {
@@ -30,6 +37,9 @@ interface AuthContextType {
   loading: boolean;
   signIn?: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp?: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
+  googleSignIn?: () => Promise<{ error: string | null }>;
+  signOut?: () => Promise<{ error: string | null }>;
+  refreshUserProfile?: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -43,14 +53,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const fetchUserProfile = async (uid: string, email: string, displayName: string) => {
+    try {
+      const userDocRef = doc(db, 'users', uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        return {
+          id: uid,
+          email: email,
+          name: displayName || 'User',
+          hasCompletedAssessment: userData.hasCompletedAssessment || false,
+          mbtiType: userData.mbtiType,
+          aiPreference: userData.aiPreference,
+        };
+      } else {
+        // User document doesn't exist yet, return basic info
+        return {
+          id: uid,
+          email: email,
+          name: displayName || 'User',
+          hasCompletedAssessment: false,
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      return {
+        id: uid,
+        email: email,
+        name: displayName || 'User',
+        hasCompletedAssessment: false,
+      };
+    }
+  };
+
+  const refreshUserProfile = async () => {
+    if (auth.currentUser) {
+      const updatedUser = await fetchUserProfile(
+        auth.currentUser.uid,
+        auth.currentUser.email!,
+        auth.currentUser.displayName || 'User'
+      );
+      setUser(updatedUser);
+    }
+  };
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser: User | null) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (firebaseUser) {
-        setUser({
-          id: firebaseUser.uid,
-          email: firebaseUser.email!,
-          name: firebaseUser.displayName || 'User',
-        });
+        const userProfile = await fetchUserProfile(
+          firebaseUser.uid,
+          firebaseUser.email!,
+          firebaseUser.displayName || 'User'
+        );
+        setUser(userProfile);
       } else {
         setUser(null);
       }
@@ -79,8 +136,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const googleSignIn = async () => {
+    try {
+      // For now, return an informative error message
+      // TODO: Implement proper Google Sign-In for React Native
+      return { 
+        error: 'Google Sign-In is not yet configured for mobile. Please use email/password authentication for now.' 
+      };
+    } catch (error: any) {
+      console.error('Google Sign-In Error:', error);
+      return { error: error.message || 'Google sign in failed' };
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      return { error: null };
+    } catch (error: any) {
+      console.error('Sign out error:', error);
+      return { error: error.message || 'Sign out failed' };
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      loading, 
+      signIn, 
+      signUp, 
+      googleSignIn, 
+      signOut: handleSignOut, 
+      refreshUserProfile 
+    }}>
       {children}
     </AuthContext.Provider>
   );

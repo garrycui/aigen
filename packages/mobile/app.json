@@ -1,6 +1,7 @@
 {
   "name": "aigen-mobile",
   "slug": "aigen-mobile",
+  "newArchEnabled": true,
   "android": {
     "package": "com.anonymous.aigenmobile"
   }

@@ -1,62 +1,100 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Platform, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Platform, Dimensions, Animated } from 'react-native';
 import { Brain } from 'lucide-react-native';
 import { screenStyles, colors, theme } from '../theme';
-import Video from 'react-native-video';
 
 export default function HomeScreen({ onFinishSplash }: { onFinishSplash?: () => void }) {
+  const fadeAnim = new Animated.Value(0);
+  const scaleAnim = new Animated.Value(0.5);
+
   useEffect(() => {
+    // Start animations
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 1000,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      })
+    ]).start();
+
     const timer = setTimeout(() => {
       if (onFinishSplash) onFinishSplash();
-    }, 4000); // 2 seconds splash
+    }, 4000);
+    
     return () => clearTimeout(timer);
   }, [onFinishSplash]);
 
   return (
     <View style={styles.container}>
-      <Video
-        source={require('../../assets/videos/background.mp4')}
-        style={StyleSheet.absoluteFill}
-        resizeMode="cover"
-        repeat
-        muted
-        // Optionally, you can add a poster or fallback image
-      />
-      <View style={styles.overlay}>
-        <View style={styles.heroContent}>
+      <View style={styles.gradientOverlay}>
+        <Animated.View 
+          style={[
+            styles.heroContent,
+            {
+              opacity: fadeAnim,
+              transform: [{ scale: scaleAnim }]
+            }
+          ]}
+        >
           <Brain size={64} color={colors.white} />
           <Text style={styles.heroTitle}>AigenThrive</Text>
           <Text style={styles.heroSubtitle}>Empower Your Mind, Lead in the AI Era</Text>
-        </View>
+        </Animated.View>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.gray[50] },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
+  container: {
+    flex: 1,
+    backgroundColor: '#4f46e5',
+  },
+  gradientOverlay: {
+    flex: 1,
+    backgroundColor: '#667eea',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.25)', // Optional: darken video
   },
   heroContent: {
     alignItems: 'center',
-    gap: 16,
+    paddingHorizontal: theme.spacing.xl,
   },
   heroTitle: {
-    fontSize: 32,
+    fontSize: 48,
     fontWeight: 'bold',
     color: colors.white,
-    marginTop: 12,
+    marginTop: theme.spacing.lg,
+    textAlign: 'center',
+    ...Platform.select({
+      ios: {
+        fontFamily: 'System',
+      },
+      android: {
+        fontFamily: 'Roboto',
+      },
+    }),
   },
   heroSubtitle: {
     fontSize: 18,
     color: colors.white,
-    opacity: 0.85,
-    marginTop: 8,
+    marginTop: theme.spacing.md,
     textAlign: 'center',
-    maxWidth: 320,
+    opacity: 0.9,
+    lineHeight: 24,
+    ...Platform.select({
+      ios: {
+        fontFamily: 'System',
+      },
+      android: {
+        fontFamily: 'Roboto',
+      },
+    }),
   },
 });

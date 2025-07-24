@@ -4,6 +4,13 @@ import { Mail, Lock, User } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { theme } from '../theme';
 
+// Add Google icon component
+const GoogleIcon = () => (
+  <View style={styles.googleIconContainer}>
+    <Text style={styles.googleIconText}>G</Text>
+  </View>
+);
+
 const LoginScreen = () => {
   const { signIn, signUp, googleSignIn } = useAuth() as any;
   const [isLogin, setIsLogin] = useState(true);
@@ -44,11 +51,17 @@ const LoginScreen = () => {
   };
 
   const handleGoogleSignIn = async () => {
+    // Check terms for sign up
+    if (!isLogin && !acceptedTerms) {
+      Alert.alert('Error', 'Please accept the Terms of Service and Privacy Policy');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const { error } = await googleSignIn();
       if (error) {
-        Alert.alert('Error', error);
+        Alert.alert('Google Sign-In', error);
       }
     } catch {
       Alert.alert('Error', 'Failed to sign in with Google');
@@ -86,7 +99,10 @@ const LoginScreen = () => {
             onPress={handleGoogleSignIn}
             disabled={isSubmitting}
           >
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
+            <GoogleIcon />
+            <Text style={styles.googleButtonText}>
+              {isLogin ? 'Sign in with Google' : 'Sign up with Google'}
+            </Text>
           </TouchableOpacity>
           <View style={styles.divider}>
             <View style={styles.dividerLine} />
@@ -220,13 +236,29 @@ const styles = StyleSheet.create({
     fontWeight: theme.typography.fontWeight.semibold,
   },
   googleButton: {
+    flexDirection: 'row',
     backgroundColor: theme.colors.white,
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.gray[200],
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: theme.spacing[5],
+  },
+  googleIconContainer: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#4285F4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: theme.spacing[2],
+  },
+  googleIconText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   googleButtonText: {
     color: theme.colors.gray[700],
