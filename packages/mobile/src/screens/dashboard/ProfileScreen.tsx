@@ -21,9 +21,9 @@ import {
   Calendar,
   Target
 } from 'lucide-react-native';
-import { theme, screenStyles } from '../theme';
-import { useAuth } from '../context/AuthContext';
-import { useFirebase } from '../context/FirebaseContext';
+import { theme, screenStyles } from '../../theme';
+import { useAuth } from '../../context/AuthContext';
+import { useFirebase } from '../../context/FirebaseContext';
 
 interface UserProfileData {
   name: string;

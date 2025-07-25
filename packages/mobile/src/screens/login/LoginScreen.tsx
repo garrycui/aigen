@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Mail, Lock, User } from 'lucide-react-native';
-import { useAuth } from '../context/AuthContext';
-import { theme } from '../theme';
+import { useAuth } from '../../context/AuthContext';
+import { theme } from '../../theme';
 
 // Add Google icon component
 const GoogleIcon = () => (

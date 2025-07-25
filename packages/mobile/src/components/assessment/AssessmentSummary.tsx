@@ -8,8 +8,8 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { Brain, Heart, Lightbulb, Target, Star, CheckCircle } from 'lucide-react-native';
-import { theme } from '../theme';
-import { AssessmentResult } from '../lib/assessment/analyzer';
+import { theme } from '../../theme';
+import { AssessmentResult } from '../../lib/assessment/analyzer';
 
 interface AssessmentSummaryProps {
   result: AssessmentResult;

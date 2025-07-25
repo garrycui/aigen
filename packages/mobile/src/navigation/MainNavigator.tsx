@@ -1,10 +1,10 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MessageCircle, Compass, BookOpen, User } from 'lucide-react-native';
-import ChatScreen from '../screens/ChatScreen';
+import ChatScreen from '../screens/chat/ChatScreen';
 import DiscoverScreen from '../screens/DiscoverScreen';
 import LibraryScreen from '../screens/LibraryScreen';
-import ProfileScreen from '../screens/ProfileScreen';
+import ProfileScreen from '../screens/dashboard/ProfileScreen';
 import { navigationStyles } from '../theme';
 
 const Tab = createBottomTabNavigator();

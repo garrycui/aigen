@@ -4,8 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { FirebaseProvider } from '../context/FirebaseContext';
 import AuthNavigator from './AuthNavigator';
 import MainNavigator from './MainNavigator';
-import HomeScreen from '../screens/HomeScreen';
-import ChatAssessmentScreen from '../screens/ChatAssessmentScreen';
+import HomeScreen from '../screens/dashboard/HomeScreen';
+import ChatAssessmentScreen from '../screens/assessment/AssessmentScreen';
 
 const Stack = createNativeStackNavigator();
 

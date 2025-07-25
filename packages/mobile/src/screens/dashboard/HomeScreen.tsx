@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Platform, Dimensions, Animated } from 'react-native';
 import { Brain } from 'lucide-react-native';
-import { screenStyles, colors, theme } from '../theme';
+import { screenStyles, colors, theme } from '../../theme';
 
 export default function HomeScreen({ onFinishSplash }: { onFinishSplash?: () => void }) {
   const fadeAnim = new Animated.Value(0);

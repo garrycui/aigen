@@ -12,13 +12,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Send, Bot, User } from 'lucide-react-native';
-import { theme } from '../theme';
-import { useAuth } from '../context/AuthContext';
-import { useFirebase } from '../context/FirebaseContext';
-import { chatQuestions, getNextQuestion, isAssessmentComplete } from '../lib/assessment/questions';
-import { generateAssessmentResult } from '../lib/assessment/analyzer';
-import AssessmentSummary from '../components/AssessmentSummary';
-import { AssessmentResult } from '../lib/assessment/analyzer';
+import { theme } from '../../theme';
+import { useAuth } from '../../context/AuthContext';
+import { useFirebase } from '../../context/FirebaseContext';
+import { chatQuestions, getNextQuestion, isAssessmentComplete } from '../../lib/assessment/questions';
+import { generateAssessmentResult } from '../../lib/assessment/analyzer';
+import AssessmentSummary from '../../components/assessment/AssessmentSummary';
+import { AssessmentResult } from '../../lib/assessment/analyzer';
 
 interface Message {
   id: string;
