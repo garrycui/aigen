@@ -35,6 +35,15 @@ interface FirebaseContextType {
   getDocument: (collectionName: string, documentId: string) => Promise<FirebaseResponse>;
   updateDocument: (collectionName: string, documentId: string, data: any) => Promise<FirebaseResponse>;
   queryDocuments: (collectionName: string, field: string, operator: any, value: any) => Promise<FirebaseResponse>;
+
+  // Chat operations
+  saveChatSession: (userId: string, sessionData: any) => Promise<FirebaseResponse>;
+  getChatSessions: (userId: string) => Promise<FirebaseResponse>;
+  updateChatSession: (sessionId: string, updates: any) => Promise<FirebaseResponse>;
+  saveChatMessage: (sessionId: string, message: any) => Promise<FirebaseResponse>;
+  getChatMessages: (sessionId: string) => Promise<FirebaseResponse>;
+  saveUserInsights: (userId: string, insights: any) => Promise<FirebaseResponse>;
+  getUserInsights: (userId: string) => Promise<FirebaseResponse>;
 }
 
 const FirebaseContext = createContext<FirebaseContextType | null>(null);
@@ -177,6 +186,66 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     return await queryDocuments('assessments', 'userId', '==', userId);
   };
 
+  // Chat operations
+  const saveChatSession = async (userId: string, sessionData: any): Promise<FirebaseResponse> => {
+    try {
+      const sessionRef = await addDoc(collection(db, 'chatSessions'), {
+        userId,
+        ...sessionData,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      return { success: true, data: { id: sessionRef.id } };
+    } catch (error) {
+      console.error('Error saving chat session:', error);
+      return { success: false, error: 'Failed to save chat session' };
+    }
+  };
+
+  const getChatSessions = async (userId: string): Promise<FirebaseResponse> => {
+    return await queryDocuments('chatSessions', 'userId', '==', userId);
+  };
+
+  const updateChatSession = async (sessionId: string, updates: any): Promise<FirebaseResponse> => {
+    return await updateDocument('chatSessions', sessionId, updates);
+  };
+
+  const saveChatMessage = async (sessionId: string, message: any): Promise<FirebaseResponse> => {
+    try {
+      const messageRef = await addDoc(collection(db, 'chatMessages'), {
+        sessionId,
+        ...message,
+        createdAt: serverTimestamp()
+      });
+      return { success: true, data: { id: messageRef.id } };
+    } catch (error) {
+      console.error('Error saving chat message:', error);
+      return { success: false, error: 'Failed to save chat message' };
+    }
+  };
+
+  const getChatMessages = async (sessionId: string): Promise<FirebaseResponse> => {
+    return await queryDocuments('chatMessages', 'sessionId', '==', sessionId);
+  };
+
+  const saveUserInsights = async (userId: string, insights: any): Promise<FirebaseResponse> => {
+    try {
+      const insightsRef = doc(db, 'userInsights', userId);
+      await setDoc(insightsRef, {
+        ...insights,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      return { success: true, data: { id: userId } };
+    } catch (error) {
+      console.error('Error saving user insights:', error);
+      return { success: false, error: 'Failed to save user insights' };
+    }
+  };
+
+  const getUserInsights = async (userId: string): Promise<FirebaseResponse> => {
+    return await getDocument('userInsights', userId);
+  };
+
   return (
     <FirebaseContext.Provider value={{
       // User Profile operations
@@ -192,7 +261,16 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       createDocument,
       getDocument,
       updateDocument,
-      queryDocuments
+      queryDocuments,
+
+      // Chat operations
+      saveChatSession,
+      getChatSessions,
+      updateChatSession,
+      saveChatMessage,
+      getChatMessages,
+      saveUserInsights,
+      getUserInsights
     }}>
       {children}
     </FirebaseContext.Provider>

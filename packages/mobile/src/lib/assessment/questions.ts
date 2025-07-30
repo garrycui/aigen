@@ -283,6 +283,32 @@ export const chatQuestions: ChatQuestion[] = [
       "I've found specific AI tools that make my life better",
       "I'm not stressed about keeping up anymore"
     ]
+  },
+
+  // Newly added: User needs and interests (open-ended, now in English)
+  {
+    id: 'user_needs',
+    text: "What problems do you hope AI can help you solve? Please give examples.",
+    type: 'goals',
+    category: 'support_needs'
+  },
+  {
+    id: 'recent_challenge',
+    text: "What is the biggest challenge you've faced recently in learning, work, or life?",
+    type: 'goals',
+    category: 'support_needs'
+  },
+  {
+    id: 'ai_expectation',
+    text: "What changes do you most hope to achieve through AI?",
+    type: 'goals',
+    category: 'support_needs'
+  },
+  {
+    id: 'interest_topics',
+    text: "Which fields or topics are you most interested in? (e.g. AI, health, education, creativity, etc.)",
+    type: 'personal',
+    category: 'personality'
   }
 ];
 
