@@ -1,348 +1,229 @@
 export interface ChatQuestion {
   id: string;
   text: string;
-  type: 'mbti' | 'personal' | 'ai_preference' | 'communication' | 'learning' | 'emotional' | 'goals';
+  type: 'text' | 'slider' | 'single' | 'multi';
   options?: string[];
-  followUp?: string;
-  mbtiDimension?: 'E/I' | 'S/N' | 'T/F' | 'J/P';
-  category: 'personality' | 'ai_readiness' | 'communication_style' | 'learning_preference' | 'emotional_state' | 'support_needs';
+  dimension?: 'user_id' | 'PE' | 'MBTI_EI' | 'MBTI_SN' | 'MBTI_TF' | 'MBTI_JP' | 'mbti_type' | 'M' | 'E' | 'R' | 'A' | 'context';
+  stage: 1 | 2 | 3;
+  required?: boolean;
 }
 
 export const chatQuestions: ChatQuestion[] = [
-  // Welcome and Context Setting
+  // Stage 1: Core Profile (required)
   {
-    id: 'intro',
-    text: "Hi! I'm here to help you thrive in our AI-powered world. Let's start by getting to know you better. What's your name?",
-    type: 'personal',
-    category: 'personality'
+    id: 'nickname',
+    text: "What would you like us to call you?",
+    type: 'text',
+    dimension: 'user_id',
+    stage: 1,
+    required: true,
+  },
+  {
+    id: 'current_mood',
+    text: "On a scale from 0 to 10, how happy are you feeling right now?",
+    type: 'slider',
+    dimension: 'PE',
+    stage: 1,
+    required: true,
+    options: ['0', '10'], // for UI min/max
   },
 
-  // Current Emotional State & Challenges
+  // MBTI Flow (can be delivered after Stage 1 or in Stage 2)
   {
-    id: 'current_feeling',
-    text: "How are you feeling about the rapid changes in technology and AI these days?",
-    type: 'emotional',
-    category: 'emotional_state',
+    id: 'mbti_know',
+    text: "Do you know your MBTI personality type? (e.g. INTJ, ENFP, etc.)",
+    type: 'single',
+    options: ["Yes, I know my MBTI type", "No, I'm not sure"],
+    dimension: 'MBTI_EI',
+    stage: 2,
+  },
+  {
+    id: 'mbti_input',
+    text: "Great! Please enter your MBTI type (e.g. INTJ, ENFP):",
+    type: 'text',
+    dimension: 'mbti_type',
+    stage: 2,
+  },
+  {
+    id: 'mbti_ei',
+    text: "When you want to feel happier, do you prefer: A) Spending time with others and sharing joy, or B) Enjoying peaceful moments alone to recharge?",
+    type: 'single',
     options: [
-      "Excited and eager to learn more",
-      "Curious but a bit overwhelmed",
-      "Anxious about being left behind",
-      "Frustrated with the pace of change",
-      "Indifferent - it doesn't affect me much"
-    ]
+      "Spending time with others and sharing joy",
+      "Enjoying peaceful moments alone to recharge"
+    ],
+    dimension: 'MBTI_EI',
+    stage: 2,
   },
-
   {
-    id: 'biggest_challenge',
-    text: "What's your biggest challenge when it comes to technology or AI?",
-    type: 'emotional',
-    category: 'support_needs',
+    id: 'mbti_sn',
+    text: "What brings you more happiness: A) Experiencing real, tangible things and details, or B) Imagining possibilities and dreaming big?",
+    type: 'single',
     options: [
-      "Understanding how it works",
-      "Keeping up with new tools",
-      "Feeling confident using them",
-      "Finding time to learn",
-      "Knowing which tools are worth my time",
-      "Fear of making mistakes or looking foolish"
-    ]
+      "Experiencing real, tangible things and details",
+      "Imagining possibilities and dreaming big"
+    ],
+    dimension: 'MBTI_SN',
+    stage: 2,
   },
-
-  // MBTI-based Personality Assessment
   {
-    id: 'energy_source',
-    text: "When you need to recharge or process new information, what helps you most?",
-    type: 'mbti',
-    mbtiDimension: 'E/I',
-    category: 'personality',
+    id: 'mbti_tf',
+    text: "When making choices for your happiness, do you rely more on: A) Logical reasons and facts, or B) Feelings and how it affects you and others?",
+    type: 'single',
     options: [
-      "Talking it through with others and getting different perspectives",
-      "Taking quiet time alone to think and reflect"
-    ]
+      "Logical reasons and facts",
+      "Feelings and how it affects you and others"
+    ],
+    dimension: 'MBTI_TF',
+    stage: 2,
   },
-
   {
-    id: 'information_preference',
-    text: "When learning something new, what approach works best for you?",
-    type: 'mbti',
-    mbtiDimension: 'S/N',
-    category: 'learning_preference',
+    id: 'mbti_jp',
+    text: "To stay happy, do you prefer: A) Having a clear plan and routine, or B) Going with the flow and adapting as you go?",
+    type: 'single',
     options: [
-      "Step-by-step instructions with real examples",
-      "Understanding the big picture and theory first"
-    ]
+      "Having a clear plan and routine",
+      "Going with the flow and adapting as you go"
+    ],
+    dimension: 'MBTI_JP',
+    stage: 2,
   },
 
+  // Stage 2: Personality / Preferences / Motivation (recommended)
   {
-    id: 'decision_making',
-    text: "When making decisions, what do you trust most?",
-    type: 'mbti',
-    mbtiDimension: 'T/F',
-    category: 'personality',
+    id: 'past_week_happiness',
+    text: "In the last 7 days, how often did you feel happy?",
+    type: 'slider',
+    dimension: 'PE',
+    stage: 2,
+    options: ['0', '10'],
+  },
+  {
+    id: 'stress_burnout',
+    text: "In the last 7 days, how often did you feel stressed or exhausted?",
+    type: 'slider',
+    dimension: 'M',
+    stage: 2,
+    options: ['0', '10'],
+  },
+  {
+    id: 'content_preferences',
+    text: "Which types of short videos or articles do you enjoy? (Select all that apply)",
+    type: 'multi',
     options: [
-      "Logic, data, and objective analysis",
-      "Gut feelings and how it affects people"
-    ]
+      "Comedy / Humor",
+      "Science / Knowledge",
+      "Music / Dance",
+      "DIY / Crafts",
+      "Gaming / Live Streams"
+    ],
+    dimension: 'E',
+    stage: 2,
   },
-
   {
-    id: 'lifestyle_preference',
-    text: "How do you prefer to approach new challenges?",
-    type: 'mbti',
-    mbtiDimension: 'J/P',
-    category: 'personality',
+    id: 'happiness_driver',
+    text: "What makes you feel most fulfilled?",
+    type: 'single',
     options: [
-      "With a clear plan and structured approach",
-      "Flexibly, adapting as I learn more"
-    ]
+      "Learning something new",
+      "Connecting with others",
+      "Creating or making things",
+      "Simply relaxing"
+    ],
+    dimension: 'E', // also R/A
+    stage: 2,
   },
-
-  // Communication Style Preferences
   {
-    id: 'communication_tone',
-    text: "When someone is teaching you something new, what tone do you prefer?",
-    type: 'communication',
-    category: 'communication_style',
+    id: 'usage_scenario',
+    text: "When do you usually open this app for some fun?",
+    type: 'single',
     options: [
-      "Encouraging and supportive",
-      "Direct and matter-of-fact",
-      "Friendly and conversational",
-      "Professional and detailed",
-      "Gentle and patient"
-    ]
+      "During commute / waiting for transport",
+      "Lunch break / quick rest",
+      "Before bed",
+      "Waiting around / downtime"
+    ],
+    dimension: 'context',
+    stage: 2,
   },
 
+  // Stage 3: Deep Profile (optional, delivered gradually)
   {
-    id: 'feedback_style',
-    text: "How do you like to receive feedback or corrections?",
-    type: 'communication',
-    category: 'communication_style',
+    id: 'coping_preference',
+    text: "When you’re feeling down, you tend to:",
+    type: 'single',
     options: [
-      "Immediately when I make a mistake",
-      "After I've tried a few times",
-      "With suggestions for improvement",
-      "With encouragement about what I did right first",
-      "Only when I ask for it"
-    ]
+      "Be alone and reflect",
+      "Talk with someone"
+    ],
+    dimension: 'R',
+    stage: 3,
   },
-
   {
-    id: 'motivation_style',
-    text: "What motivates you most when learning something challenging?",
-    type: 'communication',
-    category: 'communication_style',
+    id: 'reward_preference',
+    text: "After completing a small task, what kind of reward do you prefer?",
+    type: 'single',
     options: [
-      "Celebrating small wins along the way",
-      "Seeing clear progress toward a big goal",
-      "Understanding how it will help me personally",
-      "Comparing my progress to others",
-      "Just knowing I'm becoming more capable"
-    ]
+      "A system badge",
+      "Likes from friends/community",
+      "A congratulatory message or joke"
+    ],
+    dimension: 'A',
+    stage: 3,
   },
-
-  // Learning Preferences
   {
-    id: 'learning_pace',
-    text: "What's your ideal learning pace?",
-    type: 'learning',
-    category: 'learning_preference',
+    id: 'meaningful_content',
+    text: "Which type of longer-form content appeals to you most?",
+    type: 'single',
     options: [
-      "Fast - I like to dive in and figure things out quickly",
-      "Steady - I prefer consistent, regular practice",
-      "Slow and thorough - I want to master each step",
-      "Variable - depends on my mood and schedule"
-    ]
+      "Inspirational stories / personal growth",
+      "In-depth interviews / talks",
+      "Philosophy / thought-provoking programs"
+    ],
+    dimension: 'M',
+    stage: 3,
   },
-
   {
-    id: 'learning_format',
-    text: "How do you learn best?",
-    type: 'learning',
-    category: 'learning_preference',
+    id: 'flow_challenge',
+    text: "Would you be willing to try a one-minute focused challenge (e.g. quick puzzle) to get into ‘flow’?",
+    type: 'single',
     options: [
-      "Watching videos and demonstrations",
-      "Reading detailed guides and articles",
-      "Hands-on practice and experimentation",
-      "Interactive conversations and Q&A",
-      "Short, bite-sized lessons"
-    ]
+      "Yes",
+      "No"
+    ],
+    dimension: 'E',
+    stage: 3,
   },
-
-  // AI Experience and Attitudes
-  {
-    id: 'ai_experience',
-    text: "What's your current experience with AI tools?",
-    type: 'ai_preference',
-    category: 'ai_readiness',
-    options: [
-      "I use them regularly and love exploring new ones",
-      "I've tried a few and had mixed experiences",
-      "I've experimented once or twice",
-      "I've heard about them but never tried",
-      "I actively avoid them"
-    ]
-  },
-
-  {
-    id: 'ai_concerns',
-    text: "What worries you most about AI? (It's okay to have concerns!)",
-    type: 'ai_preference',
-    category: 'ai_readiness',
-    options: [
-      "It's too complicated for me to understand",
-      "I might become too dependent on it",
-      "It might replace human jobs or creativity",
-      "Privacy and data security",
-      "I don't have any major concerns",
-      "The pace of change is overwhelming"
-    ]
-  },
-
-  {
-    id: 'ai_interest',
-    text: "What interests you most about AI?",
-    type: 'ai_preference',
-    category: 'ai_readiness',
-    options: [
-      "Making my work more efficient",
-      "Learning new skills and capabilities",
-      "Creative projects and exploration",
-      "Solving problems I couldn't before",
-      "Understanding how it works",
-      "Honestly, not much interests me yet"
-    ]
-  },
-
-  // Support and Goal Preferences
-  {
-    id: 'support_type',
-    text: "When you're struggling with something new, what kind of support helps most?",
-    type: 'goals',
-    category: 'support_needs',
-    options: [
-      "Step-by-step guidance until I get it",
-      "Encouragement to keep trying on my own",
-      "Examples of others who've succeeded",
-      "Understanding why I'm struggling",
-      "A break and coming back to it later"
-    ]
-  },
-
-  {
-    id: 'success_measure',
-    text: "How do you like to measure your progress?",
-    type: 'goals',
-    category: 'support_needs',
-    options: [
-      "Clear milestones and achievements",
-      "Comparing how I feel now vs. before",
-      "Getting positive feedback from others",
-      "Successfully completing real tasks",
-      "Just feeling more confident"
-    ]
-  },
-
-  {
-    id: 'time_commitment',
-    text: "How much time can you realistically dedicate to learning about AI?",
-    type: 'goals',
-    category: 'support_needs',
-    options: [
-      "5-10 minutes daily",
-      "30 minutes a few times per week",
-      "1 hour on weekends",
-      "Whatever it takes - I'm motivated",
-      "Very little - I need bite-sized help"
-    ]
-  },
-
-  // Primary Goals
-  {
-    id: 'main_goal',
-    text: "What would make you feel most successful with this app?",
-    type: 'goals',
-    category: 'support_needs',
-    options: [
-      "Feeling confident using AI tools",
-      "Staying up-to-date without stress",
-      "Finding AI tools that actually help me",
-      "Understanding enough to not feel left behind",
-      "Becoming excited about AI possibilities",
-      "Just feeling less anxious about technology"
-    ]
-  },
-
-  {
-    id: 'ideal_outcome',
-    text: "Six months from now, what would make you feel proud of your AI journey?",
-    type: 'goals',
-    category: 'support_needs',
-    options: [
-      "I'm using AI tools confidently in my daily life",
-      "I understand AI well enough to help others",
-      "I feel excited rather than worried about AI changes",
-      "I've found specific AI tools that make my life better",
-      "I'm not stressed about keeping up anymore"
-    ]
-  },
-
-  // Newly added: User needs and interests (open-ended, now in English)
-  {
-    id: 'user_needs',
-    text: "What problems do you hope AI can help you solve? Please give examples.",
-    type: 'goals',
-    category: 'support_needs'
-  },
-  {
-    id: 'recent_challenge',
-    text: "What is the biggest challenge you've faced recently in learning, work, or life?",
-    type: 'goals',
-    category: 'support_needs'
-  },
-  {
-    id: 'ai_expectation',
-    text: "What changes do you most hope to achieve through AI?",
-    type: 'goals',
-    category: 'support_needs'
-  },
-  {
-    id: 'interest_topics',
-    text: "Which fields or topics are you most interested in? (e.g. AI, health, education, creativity, etc.)",
-    type: 'personal',
-    category: 'personality'
-  }
 ];
 
+// Helper: Get next question by id (for chatQuestions)
 export const getNextQuestion = (currentQuestionId: string | null): ChatQuestion | null => {
   if (!currentQuestionId) {
     return chatQuestions[0];
   }
-  
   const currentIndex = chatQuestions.findIndex(q => q.id === currentQuestionId);
   if (currentIndex >= 0 && currentIndex < chatQuestions.length - 1) {
     return chatQuestions[currentIndex + 1];
   }
-  
   return null; // Assessment complete
 };
 
+// Helper: Check if assessment is complete
 export const isAssessmentComplete = (responses: Record<string, string>): boolean => {
-  const requiredQuestions = chatQuestions.filter(q => q.type !== 'personal');
+  const requiredQuestions = chatQuestions.filter(q => q.required);
   return requiredQuestions.every(question => question.id in responses);
 };
 
-// Helper function to get questions by category
-export const getQuestionsByCategory = (category: ChatQuestion['category']): ChatQuestion[] => {
-  return chatQuestions.filter(q => q.category === category);
+// Helper: Get questions by category
+export const getQuestionsByCategory = (category: ChatQuestion['dimension']): ChatQuestion[] => {
+  return chatQuestions.filter(q => q.dimension === category);
 };
 
-// Helper function to determine if more questions needed based on responses
+// Helper: Should ask follow-up
 export const shouldAskFollowUp = (questionId: string, response: string): boolean => {
-  // Add logic for follow-up questions based on specific responses
   const followUpTriggers: Record<string, string[]> = {
-    'current_feeling': ['Anxious about being left behind', 'Frustrated with the pace of change'],
-    'ai_experience': ['I actively avoid them', 'I\'ve heard about them but never tried'],
-    'biggest_challenge': ['Fear of making mistakes or looking foolish']
+    'current_mood': ['0', '1', '2', '3'],
+    'stress_burnout': ['7', '8', '9', '10'],
   };
-  
   return followUpTriggers[questionId]?.includes(response) || false;
 };

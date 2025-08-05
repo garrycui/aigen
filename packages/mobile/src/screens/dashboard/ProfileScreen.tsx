@@ -14,8 +14,6 @@ import {
   Mail, 
   Brain, 
   Lightbulb, 
-  MessageCircle, 
-  BookOpen, 
   LogOut, 
   RefreshCw,
   Calendar,
@@ -24,14 +22,12 @@ import {
 import { theme, screenStyles } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 
 interface UserProfileData {
   name: string;
   email: string;
   mbtiType?: string;
-  aiPreference?: string;
-  communicationStyle?: string;
-  learningPreference?: string;
   hasCompletedAssessment?: boolean;
   createdAt?: any;
   updatedAt?: any;
@@ -39,21 +35,37 @@ interface UserProfileData {
 
 interface AssessmentData {
   mbti_type?: string;
-  ai_preference?: string;
-  communication_style?: string;
-  learning_preference?: string;
-  emotional_state?: string;
+  perma?: {
+    positiveEmotion: number;
+    engagement: number;
+    relationships: number;
+    meaning: number;
+    accomplishment: number;
+  };
+  nickname?: string;
+  interests?: string[];
+  primary_goal?: string;
   createdAt?: any;
 }
 
 export default function ProfileScreen() {
   const { user, signOut: authSignOut } = useAuth();
   const { getUserProfile, getUserAssessment } = useFirebase();
+  const navigation = useNavigation<any>();
   
   const [profileData, setProfileData] = useState<UserProfileData | null>(null);
   const [assessmentData, setAssessmentData] = useState<AssessmentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Reload profile and assessment data when screen is focused (e.g. after retake)
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user) {
+        loadUserData();
+      }
+    }, [user])
+  );
 
   useEffect(() => {
     if (user) {
@@ -84,14 +96,23 @@ export default function ProfileScreen() {
         });
       }
 
-      // Load assessment data if user has completed assessment
-      if (user.hasCompletedAssessment) {
-        const assessmentResult = await getUserAssessment(user.id);
-        if (assessmentResult.success && assessmentResult.data.length > 0) {
-          // Get the most recent assessment
-          const latestAssessment = assessmentResult.data[0];
-          setAssessmentData(latestAssessment);
-        }
+      // Always fetch the latest assessment (not just if user.hasCompletedAssessment)
+      const assessmentResult = await getUserAssessment(user.id);
+      if (assessmentResult.success && assessmentResult.data.length > 0) {
+        // Sort by createdAt descending, pick the latest
+        const sorted = assessmentResult.data
+          .slice()
+          .sort((a: AssessmentData, b: AssessmentData) => {
+            const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt).getTime();
+            const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt).getTime();
+            return bTime - aTime;
+          });
+        setAssessmentData(sorted[0]);
+        // Update profileData.hasCompletedAssessment if needed
+        setProfileData(prev => prev ? { ...prev, hasCompletedAssessment: true } : prev);
+      } else {
+        setAssessmentData(null);
+        setProfileData(prev => prev ? { ...prev, hasCompletedAssessment: false } : prev);
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -127,6 +148,10 @@ export default function ProfileScreen() {
         }
       ]
     );
+  };
+
+  const handleRetakeAssessment = () => {
+    navigation.navigate('AssessmentIntro');
   };
 
   const formatDate = (timestamp: any) => {
@@ -205,40 +230,66 @@ export default function ProfileScreen() {
           <View style={screenStyles.contentWithPadding}>
             <Text style={screenStyles.headerTitle}>Assessment Results</Text>
             
-            {profileData.mbtiType && renderInfoCard(
+            {assessmentData?.mbti_type && renderInfoCard(
               <Brain size={20} color="#6366F1" />,
               'Personality Type',
-              profileData.mbtiType,
+              assessmentData.mbti_type,
               'MBTI assessment result'
             )}
-            
-            {(profileData.aiPreference || assessmentData?.ai_preference) && renderInfoCard(
+
+            {assessmentData?.perma && (
+              <View style={screenStyles.card}>
+                <View style={styles.infoCardHeader}>
+                  <Lightbulb size={20} color="#F59E0B" />
+                  <Text style={styles.infoCardTitle}>PERMA (Happiness Dimensions)</Text>
+                </View>
+                <Text style={styles.infoCardValue}>
+                  PE: {assessmentData.perma.positiveEmotion} / 10{'\n'}
+                  E: {assessmentData.perma.engagement} / 10{'\n'}
+                  R: {assessmentData.perma.relationships} / 10{'\n'}
+                  M: {assessmentData.perma.meaning} / 10{'\n'}
+                  A: {assessmentData.perma.accomplishment} / 10
+                </Text>
+              </View>
+            )}
+
+            {assessmentData?.interests && assessmentData.interests.length > 0 && renderInfoCard(
               <Lightbulb size={20} color="#F59E0B" />,
-              'AI Readiness',
-              (profileData.aiPreference || assessmentData?.ai_preference || '').replace('_', ' '),
-              'Your AI experience level'
+              'Interests',
+              assessmentData.interests.join(', ')
             )}
-            
-            {(profileData.communicationStyle || assessmentData?.communication_style) && renderInfoCard(
-              <MessageCircle size={20} color="#EC4899" />,
-              'Communication Style',
-              (profileData.communicationStyle || assessmentData?.communication_style || '').replace(/_/g, ' '),
-              'Preferred interaction style'
-            )}
-            
-            {(profileData.learningPreference || assessmentData?.learning_preference) && renderInfoCard(
-              <BookOpen size={20} color="#10B981" />,
-              'Learning Style',
-              (profileData.learningPreference || assessmentData?.learning_preference || '').replace(/_/g, ' '),
-              'How you prefer to learn'
+
+            {assessmentData?.primary_goal && renderInfoCard(
+              <Target size={20} color="#8B5CF6" />,
+              'Fulfillment Driver',
+              assessmentData.primary_goal
             )}
 
             {assessmentData?.createdAt && renderInfoCard(
-              <Target size={20} color="#8B5CF6" />,
+              <Calendar size={20} color={theme.colors.primary.light} />,
               'Assessment Completed',
               formatDate(assessmentData.createdAt),
               'Last assessment date'
             )}
+
+            {/* Retake Assessment Button */}
+            <TouchableOpacity
+              style={[screenStyles.card, { 
+                flexDirection: 'row', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: theme.colors.primary.main,
+                gap: theme.spacing.sm,
+                marginTop: theme.spacing.md,
+              }]}
+              onPress={handleRetakeAssessment}
+            >
+              <Brain size={20} color={theme.colors.primary.main} />
+              <Text style={[theme.typography.button, { color: theme.colors.primary.main, fontWeight: '600' }]}>
+                Retake Assessment
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -249,7 +300,7 @@ export default function ProfileScreen() {
               <Brain size={32} color={theme.colors.textSecondary} />
               <Text style={screenStyles.emptyStateTitle}>Assessment Not Completed</Text>
               <Text style={screenStyles.emptyStateText}>
-                Complete your personality assessment to unlock personalized AI recommendations.
+                Complete your personality assessment to unlock personalized recommendations.
               </Text>
             </View>
           </View>

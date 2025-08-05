@@ -34,4 +34,5 @@ export const colors = {
   text: '#111827',
   textSecondary: '#6b7280',
   primaryLight: '#f0f9ff',
+  error: '#EF4444'
 } as const;

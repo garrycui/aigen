@@ -9,9 +9,7 @@ import { useFirebase } from '../../context/FirebaseContext';
 import { ChatService, ChatMessage, UserContext } from '../../lib/chat/chatService';
 import { AudioChatService } from '../../lib/audio/AudioChatService';
 import { AudioTranscript } from '../../lib/audio/AudioRecorder';
-import { UserProfiler } from '../../lib/chat/userProfiler';
 // Import chat components (implement these in components/chat/)
-import ChatMessageComponent from '../../components/chat/ChatMessage';
 import ChatInput from '../../components/chat/ChatInput';
 import ChatHeader from './ChatHeader';
 import ChatMessagesList from './ChatMessagesList';

@@ -1,7 +1,19 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { 
+  initializeAuth, 
+  getReactNativePersistence, 
+  onAuthStateChanged, 
+  User, 
+  signInWithEmailAndPassword, 
+  signInWithCredential,
+  createUserWithEmailAndPassword, 
+  updateProfile, 
+  GoogleAuthProvider, 
+  signOut 
+} from 'firebase/auth';
 import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
+
 // Fix the import path
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -20,7 +32,10 @@ const firebaseConfig = {
 console.log('FIREBASE CONFIG', firebaseConfig);
 
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+// Use initializeAuth for React Native persistence
+const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(ReactNativeAsyncStorage)
+});
 const db = getFirestore(app);
 
 interface AuthUser {

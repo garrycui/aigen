@@ -1,4 +1,3 @@
-
 import React from 'react';
 import {
   View,
@@ -7,7 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-import { Brain, Heart, Lightbulb, Target, Star, CheckCircle } from 'lucide-react-native';
+import { Brain, Star } from 'lucide-react-native';
 import { theme } from '../../theme';
 import { AssessmentResult } from '../../lib/assessment/analyzer';
 
@@ -35,20 +34,6 @@ const mbtiDescriptions: Record<string, { title: string; description: string; col
   'ESFP': { title: 'The Entertainer', description: 'Spontaneous and enthusiastic performer', color: '#E11D48' },
 };
 
-const aiReadinessColors: Record<string, string> = {
-  'beginner': '#10B981',
-  'intermediate': '#F59E0B',
-  'advanced': '#6366F1',
-  'resistant': '#EF4444',
-};
-
-const aiReadinessLabels: Record<string, string> = {
-  'beginner': 'AI Explorer',
-  'intermediate': 'AI Learner',
-  'advanced': 'AI Pro',
-  'resistant': 'AI Skeptic',
-};
-
 export default function AssessmentSummary({ result, onContinue }: AssessmentSummaryProps) {
   const mbtiInfo = mbtiDescriptions[result.mbtiType] || {
     title: 'Unique Personality',
@@ -61,8 +46,8 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
       <View style={styles.header}>
         <View style={styles.celebration}>
           <Star size={32} color="#F59E0B" />
-          <Text style={styles.congratsText}>Congratulations!</Text>
-          <Text style={styles.subText}>Your AI personality profile is ready</Text>
+          <Text style={styles.congratsText}>Congratulations, {result.personalInfo.name || 'Friend'}!</Text>
+          <Text style={styles.subText}>Your happiness profile is ready</Text>
         </View>
       </View>
 
@@ -70,7 +55,7 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
       <View style={[styles.card, styles.mbtiCard]}>
         <View style={styles.cardHeader}>
           <Brain size={24} color={mbtiInfo.color} />
-          <Text style={styles.cardTitle}>Your Personality Type</Text>
+          <Text style={styles.cardTitle}>Your MBTI Type</Text>
         </View>
         <View style={[styles.mbtiTypeContainer, { backgroundColor: mbtiInfo.color + '15' }]}>
           <Text style={[styles.mbtiType, { color: mbtiInfo.color }]}>{result.mbtiType}</Text>
@@ -79,85 +64,32 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
         </View>
       </View>
 
-      {/* AI Readiness Card */}
-      <View style={[styles.card, styles.aiCard]}>
-        <View style={styles.cardHeader}>
-          <Lightbulb size={24} color={aiReadinessColors[result.aiReadiness]} />
-          <Text style={styles.cardTitle}>AI Readiness Level</Text>
-        </View>
-        <View style={[styles.aiReadinessContainer, { backgroundColor: aiReadinessColors[result.aiReadiness] + '15' }]}>
-          <Text style={[styles.aiReadinessLabel, { color: aiReadinessColors[result.aiReadiness] }]}>
-            {aiReadinessLabels[result.aiReadiness]}
-          </Text>
-          <Text style={styles.aiReadinessDescription}>
-            {result.aiReadiness === 'beginner' && "Perfect! You're ready to start your AI journey with confidence."}
-            {result.aiReadiness === 'intermediate' && "Great! You have some experience and are ready to level up."}
-            {result.aiReadiness === 'advanced' && "Excellent! You're well-equipped to explore advanced AI features."}
-            {result.aiReadiness === 'resistant' && "That's okay! We'll help you find your comfort zone with AI."}
-          </Text>
+      {/* PERMA Scores */}
+      <View style={[styles.card, styles.goalCard]}>
+        <Text style={styles.goalTitle}>Your Happiness Dimensions (PERMA)</Text>
+        <View>
+          <Text style={styles.goalText}>Positive Emotion (PE): {result.happinessScores.positiveEmotion} / 10</Text>
+          <Text style={styles.goalText}>Engagement (E): {result.happinessScores.engagement} / 10</Text>
+          <Text style={styles.goalText}>Relationships (R): {result.happinessScores.relationships} / 10</Text>
+          <Text style={styles.goalText}>Meaning (M): {result.happinessScores.meaning} / 10</Text>
+          <Text style={styles.goalText}>Accomplishment (A): {result.happinessScores.accomplishment} / 10</Text>
         </View>
       </View>
 
-      {/* Communication Style */}
-      <View style={[styles.card, styles.communicationCard]}>
-        <View style={styles.cardHeader}>
-          <Heart size={24} color="#EC4899" />
-          <Text style={styles.cardTitle}>Your Learning Style</Text>
-        </View>
-        <View style={styles.styleGrid}>
-          <View style={[styles.styleItem, { backgroundColor: '#EC489915' }]}>
-            <Text style={[styles.styleLabel, { color: '#EC4899' }]}>Communication</Text>
-            <Text style={styles.styleValue}>
-              {result.communicationStyle.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-            </Text>
-          </View>
-          <View style={[styles.styleItem, { backgroundColor: '#06B6D415' }]}>
-            <Text style={[styles.styleLabel, { color: '#06B6D4' }]}>Learning</Text>
-            <Text style={styles.styleValue}>
-              {result.learningPreference.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Personalized Recommendations */}
-      <View style={[styles.card, styles.recommendationsCard]}>
-        <View style={styles.cardHeader}>
-          <Target size={24} color="#10B981" />
-          <Text style={styles.cardTitle}>Your Personalized Plan</Text>
-        </View>
-        <View style={styles.recommendationsList}>
-          <View style={styles.recommendationItem}>
-            <CheckCircle size={16} color="#10B981" />
-            <Text style={styles.recommendationText}>
-              Content tone: {result.personalizedRecommendations.contentTone}
-            </Text>
-          </View>
-          <View style={styles.recommendationItem}>
-            <CheckCircle size={16} color="#10B981" />
-            <Text style={styles.recommendationText}>
-              Interaction style: {result.personalizedRecommendations.interactionStyle.replace(/_/g, ' ')}
-            </Text>
-          </View>
-          <View style={styles.recommendationItem}>
-            <CheckCircle size={16} color="#10B981" />
-            <Text style={styles.recommendationText}>
-              Learning path: {result.personalizedRecommendations.learningPath.replace(/_/g, ' ')}
-            </Text>
-          </View>
-          <View style={styles.recommendationItem}>
-            <CheckCircle size={16} color="#10B981" />
-            <Text style={styles.recommendationText}>
-              Motivation: {result.personalizedRecommendations.motivationStrategy.replace(/_/g, ' ')}
-            </Text>
-          </View>
-        </View>
+      {/* Interests */}
+      <View style={[styles.card, styles.goalCard]}>
+        <Text style={styles.goalTitle}>Your Interests</Text>
+        <Text style={styles.goalText}>
+          {result.interests && result.interests.length > 0
+            ? result.interests.join(', ')
+            : 'Not provided'}
+        </Text>
       </View>
 
       {/* Primary Goal */}
       {result.personalInfo.primaryGoal && (
         <View style={[styles.card, styles.goalCard]}>
-          <Text style={styles.goalTitle}>Your Goal</Text>
+          <Text style={styles.goalTitle}>Your Fulfillment Driver</Text>
           <Text style={styles.goalText}>"{result.personalInfo.primaryGoal}"</Text>
         </View>
       )}
@@ -168,7 +100,7 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>
-          Your profile will help us provide personalized AI recommendations and learning experiences.
+          Your profile helps us personalize your experience and boost your happiness.
         </Text>
       </View>
     </ScrollView>
@@ -245,70 +177,6 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     textAlign: 'center',
     marginTop: theme.spacing.xs,
-  },
-  aiCard: {
-    borderTopWidth: 4,
-    borderTopColor: '#10B981',
-  },
-  aiReadinessContainer: {
-    padding: theme.spacing.lg,
-    borderRadius: theme.borderRadius.lg,
-    alignItems: 'center',
-  },
-  aiReadinessLabel: {
-    ...theme.typography.h3,
-    fontWeight: 'bold',
-  },
-  aiReadinessDescription: {
-    ...theme.typography.body,
-    color: theme.colors.textSecondary,
-    textAlign: 'center',
-    marginTop: theme.spacing.sm,
-  },
-  communicationCard: {
-    borderTopWidth: 4,
-    borderTopColor: '#EC4899',
-  },
-  styleGrid: {
-    flexDirection: 'row',
-    gap: theme.spacing.md,
-  },
-  styleItem: {
-    flex: 1,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.lg,
-    alignItems: 'center',
-  },
-  styleLabel: {
-    ...theme.typography.caption,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  styleValue: {
-    ...theme.typography.body,
-    color: theme.colors.text,
-    marginTop: theme.spacing.xs,
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-  recommendationsCard: {
-    borderTopWidth: 4,
-    borderTopColor: '#10B981',
-  },
-  recommendationsList: {
-    gap: theme.spacing.md,
-  },
-  recommendationItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  recommendationText: {
-    ...theme.typography.body,
-    color: theme.colors.text,
-    marginLeft: theme.spacing.sm,
-    flex: 1,
-    textTransform: 'capitalize',
   },
   goalCard: {
     backgroundColor: '#F8FAFC',

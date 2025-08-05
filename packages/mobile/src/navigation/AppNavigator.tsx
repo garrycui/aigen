@@ -5,52 +5,20 @@ import { FirebaseProvider } from '../context/FirebaseContext';
 import AuthNavigator from './AuthNavigator';
 import MainNavigator from './MainNavigator';
 import HomeScreen from '../screens/dashboard/HomeScreen';
-import ChatAssessmentScreen from '../screens/assessment/AssessmentScreen';
+import AssessmentIntro from '../screens/assessment/AssessmentIntro';
+import AssessmentScreen from '../screens/assessment/AssessmentScreen';
 
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
   const { user, refreshUserProfile } = useAuth();
   const [showSplash, setShowSplash] = useState(true);
-  const [showAssessment, setShowAssessment] = useState(false);
-
-  useEffect(() => {
-    if (user) {
-      const hasCompletedAssessment = user.hasCompletedAssessment || false;
-      
-      if (!hasCompletedAssessment) {
-        setShowAssessment(true);
-        setShowSplash(false);
-      } else {
-        setShowSplash(true);
-        setShowAssessment(false);
-      }
-    }
-  }, [user]);
-
-  const handleAssessmentComplete = async () => {
-    // Refresh user profile to get updated assessment status
-    if (refreshUserProfile) {
-      await refreshUserProfile();
-    }
-    setShowAssessment(false);
-    setShowSplash(true);
-  };
 
   return (
     <FirebaseProvider>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!user ? (
           <Stack.Screen name="Auth" component={AuthNavigator} />
-        ) : showAssessment ? (
-          <Stack.Screen name="ChatAssessment">
-            {props => (
-              <ChatAssessmentScreen
-                {...props}
-                onComplete={handleAssessmentComplete}
-              />
-            )}
-          </Stack.Screen>
         ) : showSplash ? (
           <Stack.Screen
             name="Home"
@@ -64,7 +32,11 @@ export default function AppNavigator() {
             )}
           </Stack.Screen>
         ) : (
-          <Stack.Screen name="Main" component={MainNavigator} />
+          <>
+            <Stack.Screen name="Main" component={MainNavigator} />
+            <Stack.Screen name="AssessmentIntro" component={AssessmentIntro} />
+            <Stack.Screen name="Assessment" component={AssessmentScreen} />
+          </>
         )}
       </Stack.Navigator>
     </FirebaseProvider>
