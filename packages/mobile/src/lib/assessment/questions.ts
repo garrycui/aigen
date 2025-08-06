@@ -9,7 +9,7 @@ export interface ChatQuestion {
 }
 
 export const chatQuestions: ChatQuestion[] = [
-  // Stage 1: Core Profile (required)
+  // --- MBTI & Profile ---
   {
     id: 'nickname',
     text: "What would you like us to call you?",
@@ -18,17 +18,6 @@ export const chatQuestions: ChatQuestion[] = [
     stage: 1,
     required: true,
   },
-  {
-    id: 'current_mood',
-    text: "On a scale from 0 to 10, how happy are you feeling right now?",
-    type: 'slider',
-    dimension: 'PE',
-    stage: 1,
-    required: true,
-    options: ['0', '10'], // for UI min/max
-  },
-
-  // MBTI Flow (can be delivered after Stage 1 or in Stage 2)
   {
     id: 'mbti_know',
     text: "Do you know your MBTI personality type? (e.g. INTJ, ENFP, etc.)",
@@ -88,8 +77,30 @@ export const chatQuestions: ChatQuestion[] = [
     dimension: 'MBTI_JP',
     stage: 2,
   },
+  {
+    id: 'usage_scenario',
+    text: "When do you usually open this app for some fun?",
+    type: 'single',
+    options: [
+      "During commute / waiting for transport",
+      "Lunch break / quick rest",
+      "Before bed",
+      "Waiting around / downtime"
+    ],
+    dimension: 'context',
+    stage: 2,
+  },
 
-  // Stage 2: Personality / Preferences / Motivation (recommended)
+  // --- Positive Emotion (P) ---
+  {
+    id: 'current_mood',
+    text: "On a scale from 0 to 10, how happy are you feeling right now?",
+    type: 'slider',
+    dimension: 'PE',
+    stage: 1,
+    required: true,
+    options: ['0', '10'],
+  },
   {
     id: 'past_week_happiness',
     text: "In the last 7 days, how often did you feel happy?",
@@ -99,13 +110,14 @@ export const chatQuestions: ChatQuestion[] = [
     options: ['0', '10'],
   },
   {
-    id: 'stress_burnout',
-    text: "In the last 7 days, how often did you feel stressed or exhausted?",
-    type: 'slider',
-    dimension: 'M',
-    stage: 2,
-    options: ['0', '10'],
+    id: 'pe_happy_events',
+    text: "Please share three things that made you happy recently.",
+    type: 'text',
+    dimension: 'PE',
+    stage: 3,
   },
+
+  // --- Engagement (E) ---
   {
     id: 'content_preferences',
     text: "Which types of short videos or articles do you enjoy? (Select all that apply)",
@@ -130,24 +142,29 @@ export const chatQuestions: ChatQuestion[] = [
       "Creating or making things",
       "Simply relaxing"
     ],
-    dimension: 'E', // also R/A
+    dimension: 'E',
     stage: 2,
   },
   {
-    id: 'usage_scenario',
-    text: "When do you usually open this app for some fun?",
+    id: 'flow_challenge',
+    text: "Would you be willing to try a one-minute focused challenge (e.g. quick puzzle) to get into ‘flow’?",
     type: 'single',
     options: [
-      "During commute / waiting for transport",
-      "Lunch break / quick rest",
-      "Before bed",
-      "Waiting around / downtime"
+      "Yes",
+      "No"
     ],
-    dimension: 'context',
-    stage: 2,
+    dimension: 'E',
+    stage: 3,
+  },
+  {
+    id: 'e_flow_activity',
+    text: "Is there any activity that makes you lose track of time when doing it?",
+    type: 'text',
+    dimension: 'E',
+    stage: 3,
   },
 
-  // Stage 3: Deep Profile (optional, delivered gradually)
+  // --- Relationships (R) ---
   {
     id: 'coping_preference',
     text: "When you’re feeling down, you tend to:",
@@ -160,16 +177,28 @@ export const chatQuestions: ChatQuestion[] = [
     stage: 3,
   },
   {
-    id: 'reward_preference',
-    text: "After completing a small task, what kind of reward do you prefer?",
-    type: 'single',
+    id: 'r_important_relationships',
+    text: "Which relationships matter most to you in life?",
+    type: 'multi',
     options: [
-      "A system badge",
-      "Likes from friends/community",
-      "A congratulatory message or joke"
+      "Family",
+      "Friends",
+      "Partner",
+      "Colleagues",
+      "Community"
     ],
-    dimension: 'A',
+    dimension: 'R',
     stage: 3,
+  },
+
+  // --- Meaning (M) ---
+  {
+    id: 'stress_burnout',
+    text: "In the last 7 days, how often did you feel stressed or exhausted?",
+    type: 'slider',
+    dimension: 'M',
+    stage: 2,
+    options: ['0', '10'],
   },
   {
     id: 'meaningful_content',
@@ -184,14 +213,37 @@ export const chatQuestions: ChatQuestion[] = [
     stage: 3,
   },
   {
-    id: 'flow_challenge',
-    text: "Would you be willing to try a one-minute focused challenge (e.g. quick puzzle) to get into ‘flow’?",
+    id: 'm_meaning_sources',
+    text: "What gives your life a sense of meaning?",
+    type: 'multi',
+    options: [
+      "Helping others",
+      "Pursuing dreams",
+      "Learning and growth",
+      "Spirituality or faith"
+    ],
+    dimension: 'M',
+    stage: 3,
+  },
+
+  // --- Accomplishment (A) ---
+  {
+    id: 'reward_preference',
+    text: "After completing a small task, what kind of reward do you prefer?",
     type: 'single',
     options: [
-      "Yes",
-      "No"
+      "A system badge",
+      "Likes from friends/community",
+      "A congratulatory message or joke"
     ],
-    dimension: 'E',
+    dimension: 'A',
+    stage: 3,
+  },
+  {
+    id: 'a_proud_achievement',
+    text: "What is the accomplishment you are most proud of in the past year?",
+    type: 'text',
+    dimension: 'A',
     stage: 3,
   },
 ];

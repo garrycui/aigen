@@ -3,6 +3,11 @@ export interface AssessmentResult {
   personalInfo: {
     name?: string;
     primaryGoal?: string;
+    happyEvents?: string;
+    flowActivity?: string;
+    importantRelationships?: string[];
+    meaningSources?: string[];
+    proudAchievement?: string;
   };
   interests: string[];
   emotionBaseline: number;
@@ -12,6 +17,32 @@ export interface AssessmentResult {
     relationships: number;
     meaning: number;
     accomplishment: number;
+  };
+  permaAnswers: {
+    P: {
+      currentMood?: string;
+      pastWeekHappiness?: string;
+      happyEvents?: string;
+    };
+    E: {
+      contentPreferences?: string[];
+      happinessDriver?: string;
+      flowChallenge?: string;
+      flowActivity?: string;
+    };
+    R: {
+      copingPreference?: string;
+      importantRelationships?: string[];
+    };
+    M: {
+      stressBurnout?: string;
+      meaningfulContent?: string;
+      meaningSources?: string[];
+    };
+    A: {
+      rewardPreference?: string;
+      proudAchievement?: string;
+    };
   };
 }
 
@@ -32,42 +63,58 @@ export const analyzeMBTI = (responses: Record<string, string | string[]>): strin
 };
 
 export const analyzePERMA = (responses: Record<string, string | string[]>): AssessmentResult['happinessScores'] => {
-  const scores = {
-    positiveEmotion: Math.round(
-      ((Number(responses['current_mood'] ?? 5) + Number(responses['past_week_happiness'] ?? 5)) / 2)
-    ),
-    engagement: 0,
-    relationships: 0,
-    meaning: 0,
-    accomplishment: 0,
+  // Positive Emotion (P)
+  let positiveEmotion = 0;
+  const mood = Number(responses['current_mood'] ?? 5);
+  const weekHappiness = Number(responses['past_week_happiness'] ?? 5);
+  positiveEmotion = Math.round((mood + weekHappiness) / 2);
+
+  // If user shared happy events, boost score slightly
+  if (typeof responses['pe_happy_events'] === 'string' && responses['pe_happy_events'].trim().length > 0) {
+    positiveEmotion = Math.min(positiveEmotion + 1, 10);
+  }
+
+  // Engagement (E)
+  let engagement = 0;
+  const contentPrefs = Array.isArray(responses['content_preferences']) ? responses['content_preferences'] : [];
+  engagement += Math.min(contentPrefs.length * 2, 6); // max 6 from preferences
+  if (contentPrefs.includes('Gaming / Live Streams')) engagement += 1;
+  if (typeof responses['happiness_driver'] === 'string' && responses['happiness_driver'].includes('Learning')) engagement += 2;
+  if (typeof responses['flow_challenge'] === 'string' && responses['flow_challenge'] === 'Yes') engagement += 2;
+  if (typeof responses['e_flow_activity'] === 'string' && responses['e_flow_activity'].trim().length > 0) engagement += 1;
+  engagement = Math.min(engagement, 10);
+
+  // Relationships (R)
+  let relationships = 0;
+  if (typeof responses['happiness_driver'] === 'string' && responses['happiness_driver'].includes('Connecting')) relationships += 2;
+  if (typeof responses['coping_preference'] === 'string' && responses['coping_preference'].includes('Talk')) relationships += 2;
+  const rels = Array.isArray(responses['r_important_relationships']) ? responses['r_important_relationships'] : [];
+  relationships += Math.min(rels.length, 4); // up to 4 for relationships selected
+  relationships = Math.min(relationships, 10);
+
+  // Meaning (M)
+  let meaning = 0;
+  const burnout = Number(responses['stress_burnout'] ?? 5);
+  meaning += Math.max(10 - burnout, 0); // inverse of stress
+  if (typeof responses['meaningful_content'] === 'string' && responses['meaningful_content'].trim().length > 0) meaning += 1;
+  const sources = Array.isArray(responses['m_meaning_sources']) ? responses['m_meaning_sources'] : [];
+  meaning += Math.min(sources.length, 3); // up to 3 for meaning sources
+  meaning = Math.min(meaning, 10);
+
+  // Accomplishment (A)
+  let accomplishment = 0;
+  if (typeof responses['happiness_driver'] === 'string' && responses['happiness_driver'].includes('Creating')) accomplishment += 2;
+  if (typeof responses['reward_preference'] === 'string' && responses['reward_preference'].includes('badge')) accomplishment += 2;
+  if (typeof responses['a_proud_achievement'] === 'string' && responses['a_proud_achievement'].trim().length > 0) accomplishment += 2;
+  accomplishment = Math.min(accomplishment, 10);
+
+  return {
+    positiveEmotion,
+    engagement,
+    relationships,
+    meaning,
+    accomplishment,
   };
-  if (Array.isArray(responses['content_preferences'])) {
-    scores.engagement += responses['content_preferences'].length * 2;
-    if (responses['content_preferences'].includes('Gaming / Live Streams')) scores.engagement += 2;
-  }
-  if (typeof responses['happiness_driver'] === 'string' && responses['happiness_driver'].includes('Learning')) {
-    scores.engagement += 3;
-  }
-  if (typeof responses['flow_challenge'] === 'string' && responses['flow_challenge'] === 'Yes') {
-    scores.engagement += 2;
-  }
-  if (typeof responses['happiness_driver'] === 'string' && responses['happiness_driver'].includes('Connecting')) {
-    scores.relationships += 3;
-  }
-  if (typeof responses['coping_preference'] === 'string' && responses['coping_preference'].includes('Talk')) {
-    scores.relationships += 2;
-  }
-  scores.meaning = 10 - Number(responses['stress_burnout'] ?? 5);
-  if (typeof responses['meaningful_content'] === 'string') {
-    scores.meaning += 2;
-  }
-  if (typeof responses['happiness_driver'] === 'string' && responses['happiness_driver'].includes('Creating')) {
-    scores.accomplishment += 3;
-  }
-  if (typeof responses['reward_preference'] === 'string' && responses['reward_preference'].includes('badge')) {
-    scores.accomplishment += 2;
-  }
-  return scores;
 };
 
 export const generateAssessmentResult = (responses: Record<string, string | string[]>): AssessmentResult => {
@@ -78,9 +125,40 @@ export const generateAssessmentResult = (responses: Record<string, string | stri
     personalInfo: {
       name: typeof responses['nickname'] === 'string' ? responses['nickname'] : '',
       primaryGoal: typeof responses['happiness_driver'] === 'string' ? responses['happiness_driver'] : '',
+      happyEvents: typeof responses['pe_happy_events'] === 'string' ? responses['pe_happy_events'] : '',
+      flowActivity: typeof responses['e_flow_activity'] === 'string' ? responses['e_flow_activity'] : '',
+      importantRelationships: Array.isArray(responses['r_important_relationships']) ? responses['r_important_relationships'] : [],
+      meaningSources: Array.isArray(responses['m_meaning_sources']) ? responses['m_meaning_sources'] : [],
+      proudAchievement: typeof responses['a_proud_achievement'] === 'string' ? responses['a_proud_achievement'] : '',
     },
     interests: Array.isArray(responses['content_preferences']) ? responses['content_preferences'] : [],
     emotionBaseline: Number(responses['current_mood'] ?? 5),
     happinessScores,
+    permaAnswers: {
+      P: {
+        currentMood: typeof responses['current_mood'] === 'string' ? responses['current_mood'] : '',
+        pastWeekHappiness: typeof responses['past_week_happiness'] === 'string' ? responses['past_week_happiness'] : '',
+        happyEvents: typeof responses['pe_happy_events'] === 'string' ? responses['pe_happy_events'] : '',
+      },
+      E: {
+        contentPreferences: Array.isArray(responses['content_preferences']) ? responses['content_preferences'] : [],
+        happinessDriver: typeof responses['happiness_driver'] === 'string' ? responses['happiness_driver'] : '',
+        flowChallenge: typeof responses['flow_challenge'] === 'string' ? responses['flow_challenge'] : '',
+        flowActivity: typeof responses['e_flow_activity'] === 'string' ? responses['e_flow_activity'] : '',
+      },
+      R: {
+        copingPreference: typeof responses['coping_preference'] === 'string' ? responses['coping_preference'] : '',
+        importantRelationships: Array.isArray(responses['r_important_relationships']) ? responses['r_important_relationships'] : [],
+      },
+      M: {
+        stressBurnout: typeof responses['stress_burnout'] === 'string' ? responses['stress_burnout'] : '',
+        meaningfulContent: typeof responses['meaningful_content'] === 'string' ? responses['meaningful_content'] : '',
+        meaningSources: Array.isArray(responses['m_meaning_sources']) ? responses['m_meaning_sources'] : [],
+      },
+      A: {
+        rewardPreference: typeof responses['reward_preference'] === 'string' ? responses['reward_preference'] : '',
+        proudAchievement: typeof responses['a_proud_achievement'] === 'string' ? responses['a_proud_achievement'] : '',
+      },
+    }
   };
 };
