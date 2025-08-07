@@ -120,6 +120,8 @@ export const analyzePERMA = (responses: Record<string, string | string[]>): Asse
 export const generateAssessmentResult = (responses: Record<string, string | string[]>): AssessmentResult => {
   const mbtiType = analyzeMBTI(responses);
   const happinessScores = analyzePERMA(responses);
+  // Extract user interests for chat
+  const interests = Array.isArray(responses['content_preferences']) ? responses['content_preferences'] : [];
   return {
     mbtiType,
     personalInfo: {
@@ -131,7 +133,7 @@ export const generateAssessmentResult = (responses: Record<string, string | stri
       meaningSources: Array.isArray(responses['m_meaning_sources']) ? responses['m_meaning_sources'] : [],
       proudAchievement: typeof responses['a_proud_achievement'] === 'string' ? responses['a_proud_achievement'] : '',
     },
-    interests: Array.isArray(responses['content_preferences']) ? responses['content_preferences'] : [],
+    interests,
     emotionBaseline: Number(responses['current_mood'] ?? 5),
     happinessScores,
     permaAnswers: {

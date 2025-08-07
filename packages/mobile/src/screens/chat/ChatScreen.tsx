@@ -9,6 +9,7 @@ import { useFirebase } from '../../context/FirebaseContext';
 import { ChatService, ChatMessage, UserContext } from '../../lib/chat/chatService';
 import { AudioChatService } from '../../lib/audio/AudioChatService';
 import { AudioTranscript } from '../../lib/audio/AudioRecorder';
+import { getPERMAGuidanceAdvanced } from '../../lib/chat/permaGuide';
 // Import chat components (implement these in components/chat/)
 import ChatInput from '../../components/chat/ChatInput';
 import ChatHeader from './ChatHeader';
@@ -115,8 +116,9 @@ export default function ChatScreen() {
     try {
       setIsInitializing(true);
       const assessmentResult = await getUserAssessment(user!.id);
+      let assessment = null;
       if (assessmentResult.success && assessmentResult.data?.length > 0) {
-        const assessment = assessmentResult.data[0];
+        assessment = assessmentResult.data[0];
         setUserContext({
           mbtiType: assessment.mbti_type,
           aiPreference: assessment.ai_preference,
@@ -124,7 +126,29 @@ export default function ChatScreen() {
           learningPreference: assessment.learning_preference,
           emotionalState: assessment.emotional_state,
           supportNeeds: assessment.support_needs,
+          perma: assessment.perma,
+          interests: assessment.interests,
+          name: assessment.nickname,
         });
+
+        // --- Show happiness guidance as a chat message (for test/feedback) ---
+        if (assessment.perma && assessment.mbti_type && assessment.permaAnswers) {
+          const happinessGuidance = getPERMAGuidanceAdvanced({
+            perma: assessment.perma,
+            mbtiType: assessment.mbti_type,
+            permaAnswers: assessment.permaAnswers
+          });
+          const guidanceMsg: ExtendedChatMessage = {
+            id: `happiness-guidance-${Date.now()}`,
+            content: `🧭 Happiness Guidance:\n${happinessGuidance}\n\n(Please let us know if this matches what you're looking for!)`,
+            role: 'assistant',
+            timestamp: new Date().toISOString(),
+            sentiment: 'neutral',
+            isAudioMessage: false
+          };
+          setMessages(prev => [...prev, guidanceMsg]);
+        }
+        // ---------------------------------------------------------------
       }
       const sessionsResult = await getChatSessions(user!.id);
       if (sessionsResult.success && sessionsResult.data?.length > 0) {

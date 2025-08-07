@@ -23,6 +23,8 @@ import { theme, screenStyles } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { getPersonaPrompt } from '../../lib/chat/persona';
+import { getPERMAGuidance } from '../../lib/chat/permaGuide';
 
 interface UserProfileData {
   name: string;
@@ -237,6 +239,16 @@ export default function ProfileScreen() {
               'MBTI assessment result'
             )}
 
+            {/* MBTI Persona */}
+            {assessmentData?.mbti_type && (
+              <View style={screenStyles.card}>
+                <Text style={styles.infoCardTitle}>AI Chat Persona</Text>
+                <Text style={styles.infoCardSubtitle}>
+                  {getPersonaPrompt(assessmentData.mbti_type, assessmentData.nickname)}
+                </Text>
+              </View>
+            )}
+
             {assessmentData?.perma && (
               <View style={screenStyles.card}>
                 <View style={styles.infoCardHeader}>
@@ -249,6 +261,10 @@ export default function ProfileScreen() {
                   R: {assessmentData.perma.relationships} / 10{'\n'}
                   M: {assessmentData.perma.meaning} / 10{'\n'}
                   A: {assessmentData.perma.accomplishment} / 10
+                </Text>
+                {/* PERMA Focus Area */}
+                <Text style={styles.infoCardSubtitle}>
+                  {getPERMAGuidance(assessmentData.perma)}
                 </Text>
               </View>
             )}

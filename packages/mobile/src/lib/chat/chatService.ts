@@ -1,5 +1,8 @@
 import { generateChatResponse } from '../common/openai';
 import { UserProfiler } from './userProfiler';
+import { getPersonaPrompt } from './persona';
+import { getPERMAGuidanceAdvanced } from './permaGuide';
+import { extractUserInterests, recommendTopics } from './interestRecommender';
 
 export interface ChatMessage {
   id: string;
@@ -16,6 +19,9 @@ export interface UserContext {
   learningPreference?: string;
   emotionalState?: string;
   supportNeeds?: string;
+  perma?: any; // Add this
+  interests?: string[]; // Add this
+  name?: string; // Add this
 }
 
 export class ChatService {
@@ -30,32 +36,55 @@ export class ChatService {
   async generateResponse(
     message: string,
     chatHistory: ChatMessage[],
-    userContext?: UserContext
+    userContext?: UserContext & { perma?: any; interests?: string[]; name?: string; mbtiType?: string; permaAnswers?: any }
   ): Promise<{ response: string; sentiment?: string }> {
     try {
       // Persona and context
-      let persona = `You are an enthusiastic, funny, and supportive AI companion. Use humor, emojis, and ask follow-up questions.`;
-      let contextEnhance = '';
-      if (userContext) {
-        if (userContext.aiPreference === 'resistant') contextEnhance += ' User is cautious about AI, be extra encouraging.';
-        if (userContext.aiPreference === 'beginner') contextEnhance += ' User is new to AI, explain clearly and celebrate wins.';
-        if (userContext.aiPreference === 'advanced') contextEnhance += ' User is AI-savvy, share advanced insights.';
-        if (userContext.emotionalState === 'anxious') contextEnhance += ' User is anxious, be reassuring.';
-        if (userContext.mbtiType) contextEnhance += ` User MBTI: ${userContext.mbtiType}.`;
-        if (userContext.communicationStyle) contextEnhance += ` Communication style: ${userContext.communicationStyle}.`;
-        if (userContext.learningPreference) contextEnhance += ` Learning preference: ${userContext.learningPreference}.`;
-      }
-      // Request concise, robust answers
-      const enhancedPrompt = `${persona}${contextEnhance}
-Always respond concisely, clearly, and robustly. Avoid unnecessary repetition. Adapt your tone and style to the user's MBTI and communication preferences.
+      const persona = getPersonaPrompt(userContext?.mbtiType, userContext?.name);
+      const permaGuidance = (userContext?.perma && userContext?.mbtiType && userContext?.permaAnswers)
+        ? getPERMAGuidanceAdvanced({
+            perma: userContext.perma,
+            mbtiType: userContext.mbtiType,
+            permaAnswers: userContext.permaAnswers
+          })
+        : '';
+      const interests = userContext?.interests || [];
+      const topics = recommendTopics(interests);
 
-User message: ${message}`;
-      const formattedHistory = chatHistory.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+      // Build a summary of recent chat history for context
+      const historySummary = chatHistory.slice(-6).map(msg =>
+        `${msg.role === 'user' ? (userContext?.name || 'User') : 'AI'}: ${msg.content}`
+      ).join('\n');
+
+      const contextEnhance = `
+${persona}
+${permaGuidance ? `\n${permaGuidance}` : ''}
+User interests: ${topics.join(', ')}.
+
+You are a highly engaging, emotionally intelligent AI companion.
+- Always maintain awareness of the ongoing conversation and reference relevant parts of the chat history below.
+- Respond in a natural, warm, and conversational way (never robotic).
+- Match the user's message length and style: reply concisely if the user is brief, and provide a bit more detail if the user writes longer messages.
+- Keep responses friendly, clear, and easy to read—avoid long paragraphs or overwhelming the user.
+- Use short paragraphs, bullet points, or lists if helpful.
+- Use the user's name (${userContext?.name || 'User'}) when appropriate.
+- Show empathy, curiosity, encouragement, and a touch of humor when suitable.
+- Ask thoughtful, open-ended follow-up questions based on what the user just said or previous context.
+- If the user mentions a previous topic, smoothly continue or connect to it.
+- If the user seems disengaged, gently re-engage them with a question or by referencing their interests.
+- Avoid repeating yourself and keep responses concise but warm.
+- If the user shares something personal or emotional, acknowledge it with care.
+- If the user asks for advice, tailor it to their MBTI and happiness needs.
+
+Recent chat history:
+${historySummary}
+
+User message: ${message}
+`;
+
+      const formattedHistory: { role: string; content: string }[] = []; // Already included above, so don't double-send
       const result = await generateChatResponse(
-        enhancedPrompt,
+        contextEnhance,
         formattedHistory,
         userContext?.mbtiType,
         userContext?.aiPreference

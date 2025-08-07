@@ -1,5 +1,6 @@
 import { ChatMessage } from './chatService';
 import { getUserInsightsFromOpenAI } from '../common/openai';
+import { extractUserInterests } from './interestRecommender';
 
 export interface UserInsights {
   communicationPatterns: string[];
@@ -67,6 +68,19 @@ ${messages.map(m => `[${m.role}] ${m.content}`).join('\n')}
     // Call OpenAI API (see implementation in ../common/openai)
     const insights = await getUserInsightsFromOpenAI(prompt);
     return insights;
+  }
+
+  static mergeAssessmentAndChatInsights(
+    assessment: { mbtiType?: string; interests?: string[]; happinessScores?: any; personalInfo?: any },
+    chatInsights: UserInsights
+  ): UserInsights & { mbtiType?: string; perma?: any; name?: string } {
+    return {
+      ...chatInsights,
+      mbtiType: assessment.mbtiType,
+      perma: assessment.happinessScores,
+      name: assessment.personalInfo?.name,
+      interests: extractUserInterests(assessment.interests, chatInsights.interests),
+    };
   }
 
   private static extractCommunicationPatterns(messages: ChatMessage[]): string[] {
