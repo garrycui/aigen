@@ -167,7 +167,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   // Assessment operations
   const saveAssessment = async (userId: string, assessmentData: any): Promise<FirebaseResponse> => {
     try {
-      // Save assessment document
+      // assessmentData now includes 'responses' (all answers)
       const assessmentRef = await addDoc(collection(db, 'assessments'), {
         userId: userId,
         ...assessmentData,

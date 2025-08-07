@@ -25,6 +25,7 @@ import { useFirebase } from '../../context/FirebaseContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getPersonaPrompt } from '../../lib/chat/persona';
 import { getPERMAGuidance } from '../../lib/chat/permaGuide';
+import { useLatestAssessment } from '../../hooks/useLatestAssessment';
 
 interface UserProfileData {
   name: string;
@@ -35,32 +36,19 @@ interface UserProfileData {
   updatedAt?: any;
 }
 
-interface AssessmentData {
-  mbti_type?: string;
-  perma?: {
-    positiveEmotion: number;
-    engagement: number;
-    relationships: number;
-    meaning: number;
-    accomplishment: number;
-  };
-  nickname?: string;
-  interests?: string[];
-  primary_goal?: string;
-  createdAt?: any;
-}
-
 export default function ProfileScreen() {
   const { user, signOut: authSignOut } = useAuth();
-  const { getUserProfile, getUserAssessment } = useFirebase();
+  const { getUserProfile } = useFirebase();
   const navigation = useNavigation<any>();
   
   const [profileData, setProfileData] = useState<UserProfileData | null>(null);
-  const [assessmentData, setAssessmentData] = useState<AssessmentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Reload profile and assessment data when screen is focused (e.g. after retake)
+  // Use the hook for assessment data
+  const assessmentResult = user ? useLatestAssessment(user.id) : null;
+
+  // Reload profile data when screen is focused (e.g. after retake)
   useFocusEffect(
     React.useCallback(() => {
       if (user) {
@@ -80,7 +68,6 @@ export default function ProfileScreen() {
 
     try {
       setLoading(true);
-      
       // Load user profile
       const profileResult = await getUserProfile(user.id);
       if (profileResult.success) {
@@ -90,31 +77,11 @@ export default function ProfileScreen() {
           ...profileResult.data
         });
       } else {
-        // Use basic user data if profile doesn't exist
         setProfileData({
           name: user.name,
           email: user.email,
           hasCompletedAssessment: user.hasCompletedAssessment || false
         });
-      }
-
-      // Always fetch the latest assessment (not just if user.hasCompletedAssessment)
-      const assessmentResult = await getUserAssessment(user.id);
-      if (assessmentResult.success && assessmentResult.data.length > 0) {
-        // Sort by createdAt descending, pick the latest
-        const sorted = assessmentResult.data
-          .slice()
-          .sort((a: AssessmentData, b: AssessmentData) => {
-            const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt).getTime();
-            const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt).getTime();
-            return bTime - aTime;
-          });
-        setAssessmentData(sorted[0]);
-        // Update profileData.hasCompletedAssessment if needed
-        setProfileData(prev => prev ? { ...prev, hasCompletedAssessment: true } : prev);
-      } else {
-        setAssessmentData(null);
-        setProfileData(prev => prev ? { ...prev, hasCompletedAssessment: false } : prev);
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -228,64 +195,56 @@ export default function ProfileScreen() {
         </View>
 
         {/* Assessment Results */}
-        {profileData?.hasCompletedAssessment && (
+        {profileData?.hasCompletedAssessment && assessmentResult && (
           <View style={screenStyles.contentWithPadding}>
             <Text style={screenStyles.headerTitle}>Assessment Results</Text>
             
-            {assessmentData?.mbti_type && renderInfoCard(
+            {assessmentResult.mbtiType && renderInfoCard(
               <Brain size={20} color="#6366F1" />,
               'Personality Type',
-              assessmentData.mbti_type,
+              assessmentResult.mbtiType,
               'MBTI assessment result'
             )}
 
             {/* MBTI Persona */}
-            {assessmentData?.mbti_type && (
+            {assessmentResult.mbtiType && (
               <View style={screenStyles.card}>
                 <Text style={styles.infoCardTitle}>AI Chat Persona</Text>
                 <Text style={styles.infoCardSubtitle}>
-                  {getPersonaPrompt(assessmentData.mbti_type, assessmentData.nickname)}
+                  {getPersonaPrompt(assessmentResult.mbtiType, assessmentResult.personalInfo.name)}
                 </Text>
               </View>
             )}
 
-            {assessmentData?.perma && (
+            {assessmentResult.happinessScores && (
               <View style={screenStyles.card}>
                 <View style={styles.infoCardHeader}>
                   <Lightbulb size={20} color="#F59E0B" />
                   <Text style={styles.infoCardTitle}>PERMA (Happiness Dimensions)</Text>
                 </View>
                 <Text style={styles.infoCardValue}>
-                  PE: {assessmentData.perma.positiveEmotion} / 10{'\n'}
-                  E: {assessmentData.perma.engagement} / 10{'\n'}
-                  R: {assessmentData.perma.relationships} / 10{'\n'}
-                  M: {assessmentData.perma.meaning} / 10{'\n'}
-                  A: {assessmentData.perma.accomplishment} / 10
+                  PE: {assessmentResult.happinessScores.positiveEmotion} / 10{'\n'}
+                  E: {assessmentResult.happinessScores.engagement} / 10{'\n'}
+                  R: {assessmentResult.happinessScores.relationships} / 10{'\n'}
+                  M: {assessmentResult.happinessScores.meaning} / 10{'\n'}
+                  A: {assessmentResult.happinessScores.accomplishment} / 10
                 </Text>
-                {/* PERMA Focus Area */}
                 <Text style={styles.infoCardSubtitle}>
-                  {getPERMAGuidance(assessmentData.perma)}
+                  {getPERMAGuidance(assessmentResult.happinessScores)}
                 </Text>
               </View>
             )}
 
-            {assessmentData?.interests && assessmentData.interests.length > 0 && renderInfoCard(
+            {assessmentResult.interests && assessmentResult.interests.length > 0 && renderInfoCard(
               <Lightbulb size={20} color="#F59E0B" />,
               'Interests',
-              assessmentData.interests.join(', ')
+              assessmentResult.interests.join(', ')
             )}
 
-            {assessmentData?.primary_goal && renderInfoCard(
+            {assessmentResult.personalInfo.primaryGoal && renderInfoCard(
               <Target size={20} color="#8B5CF6" />,
               'Fulfillment Driver',
-              assessmentData.primary_goal
-            )}
-
-            {assessmentData?.createdAt && renderInfoCard(
-              <Calendar size={20} color={theme.colors.primary.light} />,
-              'Assessment Completed',
-              formatDate(assessmentData.createdAt),
-              'Last assessment date'
+              assessmentResult.personalInfo.primaryGoal
             )}
 
             {/* Retake Assessment Button */}

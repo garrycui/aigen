@@ -6,6 +6,7 @@ export interface ChatQuestion {
   dimension?: 'user_id' | 'PE' | 'MBTI_EI' | 'MBTI_SN' | 'MBTI_TF' | 'MBTI_JP' | 'mbti_type' | 'M' | 'E' | 'R' | 'A' | 'context';
   stage: 1 | 2 | 3;
   required?: boolean;
+  categories?: { label: string; options: string[]; dimension?: ChatQuestion['dimension'] }[]; // <-- update type
 }
 
 export const chatQuestions: ChatQuestion[] = [
@@ -123,11 +124,129 @@ export const chatQuestions: ChatQuestion[] = [
     text: "Which types of short videos or articles do you enjoy? (Select all that apply)",
     type: 'multi',
     options: [
+      // Flattened list of all sub-categories for backend compatibility
       "Comedy / Humor",
-      "Science / Knowledge",
+      "Feel-good Moments",
       "Music / Dance",
+      "Uplifting News",
+      "Cute Animals",
+      "ASMR / Relaxation",
+      "Gaming / Live Streams",
       "DIY / Crafts",
-      "Gaming / Live Streams"
+      "Puzzles / Brain Teasers",
+      "Science Experiments",
+      "Technology / Gadgets",
+      "Art / Design",
+      "Sports Highlights",
+      "Speedruns / Challenges",
+      "Motivation / Self-Improvement",
+      "Learning New Skills",
+      "Education / Tutorials",
+      "Book Summaries / Literature",
+      "Career / Success Stories",
+      "Productivity / Life Hacks",
+      "Goal Setting / Planning",
+      "Relationship Advice",
+      "Parenting / Family",
+      "Friendship Stories",
+      "Community Events",
+      "Social Experiments",
+      "Collaborative Projects",
+      "Inspirational Stories / Personal Growth",
+      "Spirituality / Mindfulness",
+      "Philosophy / Thought-provoking",
+      "Charity / Helping Others",
+      "Documentaries",
+      "News / Current Events",
+      "History / World Events",
+      "Cultural Insights",
+      "Debates / Opinions",
+      "Finance / Investing",
+      "Home / Organization",
+      "Health / Wellness",
+      "Fitness / Sports",
+      "Food / Cooking",
+      "Travel / Adventure",
+      "Fashion / Beauty",
+      "Nature / Outdoors",
+      "Other"
+    ],
+    categories: [
+      {
+        label: "Positive Emotion (PE)",
+        dimension: "PE",
+        options: [
+          "Comedy / Humor",
+          "Feel-good Moments",
+          "Music / Dance",
+          "Uplifting News",
+          "Cute Animals",
+          "ASMR / Relaxation"
+        ]
+      },
+      {
+        label: "Engagement (E)",
+        dimension: "E",
+        options: [
+          "Gaming / Live Streams",
+          "DIY / Crafts",
+          "Puzzles / Brain Teasers",
+          "Science Experiments",
+          "Technology / Gadgets",
+          "Art / Design",
+          "Sports Highlights",
+          "Speedruns / Challenges"
+        ]
+      },
+      {
+        label: "Relationships (R)",
+        dimension: "R",
+        options: [
+          "Relationship Advice",
+          "Parenting / Family",
+          "Friendship Stories",
+          "Community Events",
+          "Social Experiments",
+          "Collaborative Projects"
+        ]
+      },
+      {
+        label: "Meaning (M)",
+        dimension: "M",
+        options: [
+          "Inspirational Stories / Personal Growth",
+          "Spirituality / Mindfulness",
+          "Philosophy / Thought-provoking",
+          "Charity / Helping Others",
+          "Documentaries",
+          "News / Current Events",
+          "History / World Events",
+          "Cultural Insights",
+          "Debates / Opinions"
+        ]
+      },
+      {
+        label: "Accomplishment (A)",
+        dimension: "A",
+        options: [
+          "Motivation / Self-Improvement",
+          "Learning New Skills",
+          "Education / Tutorials",
+          "Book Summaries / Literature",
+          "Career / Success Stories",
+          "Productivity / Life Hacks",
+          "Goal Setting / Planning",
+          "Finance / Investing",
+          "Home / Organization",
+          "Health / Wellness",
+          "Fitness / Sports",
+          "Food / Cooking",
+          "Travel / Adventure",
+          "Fashion / Beauty",
+          "Nature / Outdoors",
+          "Other"
+        ]
+      }
     ],
     dimension: 'E',
     stage: 2,

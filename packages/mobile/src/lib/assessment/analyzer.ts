@@ -164,3 +164,41 @@ export const generateAssessmentResult = (responses: Record<string, string | stri
     }
   };
 };
+
+/**
+ * Analyze responses, save to Firestore, and update user profile.
+ * @param userId string
+ * @param responses Record<string, string | string[]>
+ * @param firebase FirebaseContextType (from useFirebase())
+ * @returns Promise<AssessmentResult>
+ */
+export async function analyzeAndSaveAssessment(
+  userId: string,
+  responses: Record<string, string | string[]>,
+  firebase: {
+    saveAssessment: (userId: string, data: any) => Promise<any>,
+    updateUserProfile: (userId: string, data: any) => Promise<any>
+  }
+): Promise<AssessmentResult> {
+  const result = generateAssessmentResult(responses);
+  const assessmentData = {
+    mbti_type: result.mbtiType,
+    perma: result.happinessScores,
+    nickname: result.personalInfo.name,
+    interests: result.interests,
+    primary_goal: result.personalInfo.primaryGoal,
+    responses, // Save all answers
+    result,    // <-- Save the full computed AssessmentResult
+    createdAt: new Date(),
+  };
+  const selectedCategories = Array.isArray(responses['content_preferences_categories'])
+    ? responses['content_preferences_categories']
+    : [];
+  await firebase.saveAssessment(userId, assessmentData);
+  await firebase.updateUserProfile(userId, {
+    hasCompletedAssessment: true,
+    mbtiType: result.mbtiType,
+    name: result.personalInfo.name,
+  });
+  return result;
+}

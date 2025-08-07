@@ -9,6 +9,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Send, Bot, User } from 'lucide-react-native';
@@ -18,14 +19,18 @@ import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
 import { useNavigation } from '@react-navigation/native';
 import { chatQuestions, getNextQuestion, isAssessmentComplete } from '../../lib/assessment/questions';
-import { generateAssessmentResult } from '../../lib/assessment/analyzer';
+import { generateAssessmentResult, analyzeAndSaveAssessment } from '../../lib/assessment/analyzer';
 import AssessmentSummary from '../../components/assessment/AssessmentSummary';
 import { AssessmentResult } from '../../lib/assessment/analyzer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MBTI_TYPES = [
   'INTJ','INTP','ENTJ','ENTP','INFJ','INFP','ENFJ','ENFP',
   'ISTJ','ISFJ','ESTJ','ESFJ','ISTP','ISFP','ESTP','ESFP'
 ];
+
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const ASSESSMENT_PROGRESS_KEY = 'assessment_progress';
 
 interface Message {
   id: string;
@@ -61,8 +66,24 @@ export default function AssessmentScreen() {
     currentQuestion === chatQuestions[0]?.id &&
     chatQuestions[0]?.type === 'text';
 
+  // Accordion state for content_preferences categories
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
-    startAssessment();
+    (async () => {
+      const saved = await AsyncStorage.getItem(ASSESSMENT_PROGRESS_KEY);
+      if (saved) {
+        try {
+          const { responses, currentQuestion, questionHistory } = JSON.parse(saved);
+          setResponses(responses || {});
+          setCurrentQuestion(currentQuestion || chatQuestions[0]?.id);
+          setQuestionHistory(questionHistory || [chatQuestions[0]?.id]);
+          // Optionally, reconstruct messages if you want to show previous chat
+        } catch {}
+      } else {
+        startAssessment();
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -70,6 +91,19 @@ export default function AssessmentScreen() {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, [messages]);
+
+  useEffect(() => {
+    if (currentQuestion) {
+      AsyncStorage.setItem(
+        ASSESSMENT_PROGRESS_KEY,
+        JSON.stringify({
+          responses,
+          currentQuestion,
+          questionHistory,
+        })
+      );
+    }
+  }, [responses, currentQuestion, questionHistory]);
 
   const startAssessment = () => {
     const firstQuestion = chatQuestions[0];
@@ -290,32 +324,19 @@ export default function AssessmentScreen() {
     setIsLoading(true);
     addBotMessage("Thank you for completing the assessment! Let me analyze your responses...");
     try {
-      const result = generateAssessmentResult(finalResponses);
+      await AsyncStorage.removeItem(ASSESSMENT_PROGRESS_KEY); // <-- clear progress
+      // Use the new analyzer function to generate and save everything
+      const result = await analyzeAndSaveAssessment(user.id, finalResponses, {
+        saveAssessment,
+        updateUserProfile,
+      });
       setAssessmentResult(result);
-      const assessmentData = {
-        mbti_type: result.mbtiType,
-        perma: result.happinessScores,
-        nickname: result.personalInfo.name,
-        interests: result.interests,
-        primary_goal: result.personalInfo.primaryGoal,
-        createdAt: new Date(),
-      };
-      const saveResult = await saveAssessment(user.id, assessmentData);
-      if (saveResult.success) {
-        await updateUserProfile(user.id, {
-          hasCompletedAssessment: true,
-          mbtiType: result.mbtiType,
-          name: result.personalInfo.name || user.name,
-        });
-        addBotMessage(
-          `Perfect! I've analyzed your responses and created your personalized AI profile. Let me show you the results!`
-        );
-        setTimeout(() => {
-          setShowSummary(true);
-        }, 1500);
-      } else {
-        throw new Error(saveResult.error);
-      }
+      addBotMessage(
+        `Perfect! I've analyzed your responses and created your personalized AI profile. Let me show you the results!`
+      );
+      setTimeout(() => {
+        setShowSummary(true);
+      }, 1500);
     } catch (error) {
       console.error('Error completing assessment:', error);
       Alert.alert('Error', 'Failed to save assessment. Please try again.');
@@ -392,6 +413,178 @@ export default function AssessmentScreen() {
               <Text style={styles.optionText}>{option}</Text>
             </TouchableOpacity>
           ))}
+        </View>
+      );
+    } else if (
+      question.type === 'multi' &&
+      question.id === 'content_preferences' &&
+      (question as any).categories
+    ) {
+      const categories = (question as any).categories as { label: string; options: string[] }[];
+      const selectedOptions = Array.isArray(responses[question.id]) ? (responses[question.id] as string[]) : [];
+      const selectedCategories = Array.isArray(responses['content_preferences_categories']) ? (responses['content_preferences_categories'] as string[]) : [];
+
+      // Helper: Toggle category accordion
+      const toggleCategory = (label: string) => {
+        setExpandedCategories(prev => ({
+          ...prev,
+          [label]: !prev[label]
+        }));
+      };
+
+      // Helper: Select/deselect all sub-options in a category
+      const handleCategorySelect = (label: string, options: string[]) => {
+        const isSelected = selectedCategories.includes(label);
+        let newSelectedCategories: string[];
+        let newSelectedOptions: string[];
+        if (isSelected) {
+          // Deselect category: remove category and all its sub-options
+          newSelectedCategories = selectedCategories.filter(cat => cat !== label);
+          newSelectedOptions = selectedOptions.filter(opt => !options.includes(opt));
+        } else {
+          // Select category: add category and all its sub-options
+          newSelectedCategories = [...selectedCategories, label];
+          newSelectedOptions = Array.from(new Set([...selectedOptions, ...options]));
+        }
+        setResponses({
+          ...responses,
+          [question.id]: newSelectedOptions,
+          content_preferences_categories: newSelectedCategories
+        });
+      };
+
+      // Helper: Select/deselect a single sub-option
+      const handleOptionSelect = (option: string, categoryLabel: string, categoryOptions: string[]) => {
+        let newSelectedOptions: string[];
+        let newSelectedCategories = [...selectedCategories];
+        if (selectedOptions.includes(option)) {
+          // Deselect option
+          newSelectedOptions = selectedOptions.filter(o => o !== option);
+          // If all options in this category are now unselected, remove category from selectedCategories
+          if (categoryOptions.every(opt => !newSelectedOptions.includes(opt))) {
+            newSelectedCategories = newSelectedCategories.filter(cat => cat !== categoryLabel);
+          }
+        } else {
+          // Select option
+          newSelectedOptions = [...selectedOptions, option];
+          // If all options in this category are now selected, add category to selectedCategories
+          if (categoryOptions.every(opt => newSelectedOptions.includes(opt))) {
+            if (!newSelectedCategories.includes(categoryLabel)) {
+              newSelectedCategories.push(categoryLabel);
+            }
+          }
+        }
+        setResponses({
+          ...responses,
+          [question.id]: newSelectedOptions,
+          content_preferences_categories: newSelectedCategories
+        });
+      };
+
+      inputComponent = (
+        <View style={{ width: '100%' }}>
+          {/* Always show the question text above the categories */}
+          <Text style={{ ...theme.typography.body, marginBottom: theme.spacing.md, color: theme.colors.text }}>
+            {question.text}
+          </Text>
+          <View style={{ maxHeight: SCREEN_HEIGHT * 0.6 }}>
+            <ScrollView
+              style={{ width: '100%' }}
+              contentContainerStyle={{ paddingBottom: theme.spacing.md }}
+              showsVerticalScrollIndicator={true}
+            >
+              {categories.map((cat, catIdx) => {
+                const allSelected = cat.options.every(opt => selectedOptions.includes(opt));
+                const someSelected = cat.options.some(opt => selectedOptions.includes(opt));
+                const expanded = expandedCategories[cat.label] || false;
+                return (
+                  <View key={cat.label} style={{ marginBottom: theme.spacing.md }}>
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        backgroundColor: allSelected
+                          ? theme.colors.primary.main
+                          : someSelected
+                            ? theme.colors.primary.light
+                            : theme.colors.gray[100],
+                        borderRadius: theme.borderRadius.md,
+                        padding: theme.spacing.md,
+                        borderWidth: 1,
+                        borderColor: allSelected
+                          ? theme.colors.primary.main
+                          : theme.colors.gray[300],
+                      }}
+                      onPress={() => toggleCategory(cat.label)}
+                      onLongPress={() => handleCategorySelect(cat.label, cat.options)}
+                      disabled={isLoading}
+                    >
+                      <Text style={{
+                        color: allSelected
+                          ? theme.colors.white
+                          : theme.colors.primary.main,
+                        fontWeight: 'bold',
+                      }}>
+                        {cat.label}
+                      </Text>
+                      <Text style={{
+                        color: allSelected
+                          ? theme.colors.white
+                          : theme.colors.primary.main,
+                        fontWeight: 'bold',
+                      }}>
+                        {expanded ? '▲' : '▼'}
+                      </Text>
+                    </TouchableOpacity>
+                    {expanded && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm, marginTop: theme.spacing.sm }}>
+                        {cat.options.map((option, idx) => {
+                          const selected = selectedOptions.includes(option);
+                          return (
+                            <TouchableOpacity
+                              key={option}
+                              style={[
+                                styles.optionButton,
+                                selected && { backgroundColor: theme.colors.primary.main, borderColor: theme.colors.primary.main }
+                              ]}
+                              onPress={() => handleOptionSelect(option, cat.label, cat.options)}
+                              disabled={isLoading}
+                            >
+                              <Text style={[
+                                styles.optionText,
+                                selected && { color: theme.colors.white }
+                              ]}>{option}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                    {/* Hint: Tap to expand/collapse, long-press to select/deselect all */}
+                    <Text style={{
+                      fontSize: 12,
+                      color: theme.colors.textSecondary,
+                      marginTop: theme.spacing.xs,
+                      marginLeft: 2
+                    }}>
+                      Tap to expand/collapse. Long-press to select/deselect all in this category.
+                    </Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+          <TouchableOpacity
+            style={[
+              styles.sendButton,
+              (!Array.isArray(responses[question.id]) || (responses[question.id] as string[]).length === 0 || isLoading) && styles.sendButtonDisabled,
+              { marginTop: theme.spacing.md }
+            ]}
+            onPress={handleMultiSubmit}
+            disabled={!Array.isArray(responses[question.id]) || (responses[question.id] as string[]).length === 0 || isLoading}
+          >
+            <Text style={{ color: theme.colors.white, fontWeight: '600' }}>Submit</Text>
+          </TouchableOpacity>
         </View>
       );
     } else if (question.type === 'multi') {

@@ -5,6 +5,7 @@ import ChatScreen from '../screens/chat/ChatScreen';
 import DiscoverScreen from '../screens/DiscoverScreen';
 import LibraryScreen from '../screens/LibraryScreen';
 import ProfileScreen from '../screens/dashboard/ProfileScreen';
+import VideoRecommendationsScreen from '../screens/video/VideoRecommendationsScreen';
 import { navigationStyles } from '../theme';
 
 const Tab = createBottomTabNavigator();
@@ -19,6 +20,8 @@ const getTabIcon = (routeName: string) => {
       return BookOpen;
     case 'Profile':
       return User;
+    case 'Videos':
+      return Compass; // Or a play icon if you have one
     default:
       return MessageCircle;
   }
@@ -43,6 +46,7 @@ export default function MainNavigator() {
       <Tab.Screen name="Discover" component={DiscoverScreen} options={{ tabBarLabel: 'Discover' }} />
       <Tab.Screen name="Library" component={LibraryScreen} options={{ tabBarLabel: 'Library' }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarLabel: 'Profile' }} />
+      <Tab.Screen name="Videos" component={VideoRecommendationsScreen} options={{ tabBarLabel: 'Videos' }} />
     </Tab.Navigator>
   );
 }
