@@ -40,7 +40,7 @@ export class ChatService {
   ): Promise<{ response: string; sentiment?: string }> {
     try {
       // Persona and context
-      const persona = getPersonaPrompt(userContext?.mbtiType, userContext?.name);
+      const persona = getPersonaPrompt(userContext?.mbtiType || '', userContext?.name || '');
       const permaGuidance = (userContext?.perma && userContext?.mbtiType && userContext?.permaAnswers)
         ? getPERMAGuidanceAdvanced({
             perma: userContext.perma,

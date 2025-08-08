@@ -80,8 +80,8 @@ export const chatQuestions: ChatQuestion[] = [
   },
   {
     id: 'usage_scenario',
-    text: "When do you usually open this app for some fun?",
-    type: 'single',
+    text: "When do you usually open this app for some fun? (Select all that apply)",
+    type: 'multi',
     options: [
       "During commute / waiting for transport",
       "Lunch break / quick rest",
@@ -121,130 +121,88 @@ export const chatQuestions: ChatQuestion[] = [
   // --- Engagement (E) ---
   {
     id: 'content_preferences',
-    text: "Which types of short videos or articles do you enjoy? (Select all that apply)",
+    text: "Which types of content do you enjoy? (Select all that apply)",
     type: 'multi',
     options: [
-      // Flattened list of all sub-categories for backend compatibility
+      // Reduced flattened list
       "Comedy / Humor",
-      "Feel-good Moments",
-      "Music / Dance",
+      "Feel-good Content",
+      "Music / Entertainment",
       "Uplifting News",
-      "Cute Animals",
-      "ASMR / Relaxation",
-      "Gaming / Live Streams",
-      "DIY / Crafts",
-      "Puzzles / Brain Teasers",
-      "Science Experiments",
-      "Technology / Gadgets",
-      "Art / Design",
-      "Sports Highlights",
-      "Speedruns / Challenges",
-      "Motivation / Self-Improvement",
-      "Learning New Skills",
-      "Education / Tutorials",
-      "Book Summaries / Literature",
-      "Career / Success Stories",
-      "Productivity / Life Hacks",
-      "Goal Setting / Planning",
-      "Relationship Advice",
-      "Parenting / Family",
-      "Friendship Stories",
-      "Community Events",
-      "Social Experiments",
-      "Collaborative Projects",
-      "Inspirational Stories / Personal Growth",
-      "Spirituality / Mindfulness",
-      "Philosophy / Thought-provoking",
+      "Animals / Nature",
+      "Gaming / Interactive",
+      "DIY / Creative Projects",
+      "Learning / Education",
+      "Technology / Science",
+      "Sports / Fitness",
+      "Self-Improvement",
+      "Career / Success",
+      "Relationships / Social",
+      "Family / Parenting",
+      "Community / Events",
+      "Inspiration / Growth",
+      "Mindfulness / Spirituality",
+      "Philosophy / Deep Topics",
       "Charity / Helping Others",
-      "Documentaries",
       "News / Current Events",
-      "History / World Events",
-      "Cultural Insights",
-      "Debates / Opinions",
-      "Finance / Investing",
-      "Home / Organization",
       "Health / Wellness",
-      "Fitness / Sports",
       "Food / Cooking",
       "Travel / Adventure",
-      "Fashion / Beauty",
-      "Nature / Outdoors",
-      "Other"
+      "Fashion / Lifestyle"
     ],
     categories: [
       {
-        label: "Positive Emotion (PE)",
+        label: "Positive Emotion",
         dimension: "PE",
         options: [
           "Comedy / Humor",
-          "Feel-good Moments",
-          "Music / Dance",
+          "Feel-good Content",
+          "Music / Entertainment",
           "Uplifting News",
-          "Cute Animals",
-          "ASMR / Relaxation"
+          "Animals / Nature"
         ]
       },
       {
-        label: "Engagement (E)",
+        label: "Engagement",
         dimension: "E",
         options: [
-          "Gaming / Live Streams",
-          "DIY / Crafts",
-          "Puzzles / Brain Teasers",
-          "Science Experiments",
-          "Technology / Gadgets",
-          "Art / Design",
-          "Sports Highlights",
-          "Speedruns / Challenges"
+          "Gaming / Interactive",
+          "DIY / Creative Projects",
+          "Learning / Education",
+          "Technology / Science",
+          "Sports / Fitness"
         ]
       },
       {
-        label: "Relationships (R)",
+        label: "Relationships",
         dimension: "R",
         options: [
-          "Relationship Advice",
-          "Parenting / Family",
-          "Friendship Stories",
-          "Community Events",
-          "Social Experiments",
-          "Collaborative Projects"
+          "Relationships / Social",
+          "Family / Parenting",
+          "Community / Events"
         ]
       },
       {
-        label: "Meaning (M)",
+        label: "Meaning",
         dimension: "M",
         options: [
-          "Inspirational Stories / Personal Growth",
-          "Spirituality / Mindfulness",
-          "Philosophy / Thought-provoking",
+          "Inspiration / Growth",
+          "Mindfulness / Spirituality",
+          "Philosophy / Deep Topics",
           "Charity / Helping Others",
-          "Documentaries",
-          "News / Current Events",
-          "History / World Events",
-          "Cultural Insights",
-          "Debates / Opinions"
+          "News / Current Events"
         ]
       },
       {
-        label: "Accomplishment (A)",
+        label: "Accomplishment",
         dimension: "A",
         options: [
-          "Motivation / Self-Improvement",
-          "Learning New Skills",
-          "Education / Tutorials",
-          "Book Summaries / Literature",
-          "Career / Success Stories",
-          "Productivity / Life Hacks",
-          "Goal Setting / Planning",
-          "Finance / Investing",
-          "Home / Organization",
+          "Self-Improvement",
+          "Career / Success",
           "Health / Wellness",
-          "Fitness / Sports",
           "Food / Cooking",
           "Travel / Adventure",
-          "Fashion / Beauty",
-          "Nature / Outdoors",
-          "Other"
+          "Fashion / Lifestyle"
         ]
       }
     ],

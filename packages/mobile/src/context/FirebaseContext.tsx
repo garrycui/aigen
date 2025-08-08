@@ -10,7 +10,8 @@ import {
   serverTimestamp,
   query,
   where,
-  getDocs 
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 
@@ -44,6 +45,13 @@ interface FirebaseContextType {
   getChatMessages: (sessionId: string) => Promise<FirebaseResponse>;
   saveUserInsights: (userId: string, insights: any) => Promise<FirebaseResponse>;
   getUserInsights: (userId: string) => Promise<FirebaseResponse>;
+
+  // Personalization operations
+  getUserPersonalization: (userId: string) => Promise<FirebaseResponse>;
+  updateUserPersonalization: (userId: string, updates: any) => Promise<FirebaseResponse>;
+  saveInteraction: (userId: string, interactionData: any) => Promise<FirebaseResponse>;
+  getDailyInteractions: (userId: string, date: string) => Promise<FirebaseResponse>;
+  batchUpdatePersonalization: (updates: Array<{userId: string, data: any}>) => Promise<FirebaseResponse>;
 }
 
 const FirebaseContext = createContext<FirebaseContextType | null>(null);
@@ -246,6 +254,53 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     return await getDocument('userInsights', userId);
   };
 
+  // Personalization operations
+  const getUserPersonalization = async (userId: string): Promise<FirebaseResponse> => {
+    return await getDocument('userPersonalization', userId);
+  };
+
+  const updateUserPersonalization = async (userId: string, updates: any): Promise<FirebaseResponse> => {
+    return await updateDocument('userPersonalization', userId, updates);
+  };
+
+  const saveInteraction = async (userId: string, interactionData: any): Promise<FirebaseResponse> => {
+    try {
+      const interactionRef = await addDoc(collection(db, 'userInteractions'), {
+        userId,
+        ...interactionData,
+        createdAt: serverTimestamp()
+      });
+      return { success: true, data: { id: interactionRef.id } };
+    } catch (error) {
+      console.error('Error saving interaction:', error);
+      return { success: false, error: 'Failed to save interaction' };
+    }
+  };
+
+  const getDailyInteractions = async (userId: string, date: string): Promise<FirebaseResponse> => {
+    return await getDocument(`userInteractions/${userId}/daily`, date);
+  };
+
+  const batchUpdatePersonalization = async (updates: Array<{userId: string, data: any}>): Promise<FirebaseResponse> => {
+    try {
+      const batch = writeBatch(db);
+      
+      updates.forEach(({ userId, data }) => {
+        const userRef = doc(db, 'userPersonalization', userId);
+        batch.update(userRef, {
+          ...data,
+          lastUpdated: serverTimestamp()
+        });
+      });
+
+      await batch.commit();
+      return { success: true };
+    } catch (error) {
+      console.error('Error batch updating personalization:', error);
+      return { success: false, error: 'Failed to batch update' };
+    }
+  };
+
   return (
     <FirebaseContext.Provider value={{
       // User Profile operations
@@ -270,7 +325,14 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       saveChatMessage,
       getChatMessages,
       saveUserInsights,
-      getUserInsights
+      getUserInsights,
+
+      // Personalization operations
+      getUserPersonalization,
+      updateUserPersonalization,
+      saveInteraction,
+      getDailyInteractions,
+      batchUpdatePersonalization
     }}>
       {children}
     </FirebaseContext.Provider>

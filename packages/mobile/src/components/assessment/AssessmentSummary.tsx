@@ -64,7 +64,7 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
         </View>
       </View>
 
-      {/* PERMA Scores */}
+      {/* PERMA Scores with Focus Areas */}
       <View style={[styles.card, styles.goalCard]}>
         <Text style={styles.goalTitle}>Your Happiness Dimensions (PERMA)</Text>
         <View>
@@ -74,23 +74,39 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
           <Text style={styles.goalText}>Meaning (M): {result.happinessScores.meaning} / 10</Text>
           <Text style={styles.goalText}>Accomplishment (A): {result.happinessScores.accomplishment} / 10</Text>
         </View>
+        
+        {/* Show focus areas */}
+        {result.personalization?.wellnessProfile?.focusAreas.length > 0 && (
+          <View style={styles.focusAreasContainer}>
+            <Text style={styles.focusAreasTitle}>Areas to Focus On:</Text>
+            <Text style={styles.focusAreasText}>
+              {result.personalization.wellnessProfile.focusAreas.join(', ')}
+            </Text>
+          </View>
+        )}
       </View>
 
-      {/* Interests */}
+      {/* Personalized Interests */}
       <View style={[styles.card, styles.goalCard]}>
-        <Text style={styles.goalTitle}>Your Interests</Text>
-        <Text style={styles.goalText}>
-          {result.interests && result.interests.length > 0
-            ? result.interests.join(', ')
-            : 'Not provided'}
-        </Text>
+        <Text style={styles.goalTitle}>Your Content Preferences</Text>
+        {result.personalization?.contentPreferences?.primaryInterests && 
+         result.personalization.contentPreferences.primaryInterests.length > 0 && (
+          <Text style={styles.goalText}>
+            {result.personalization.contentPreferences.primaryInterests.slice(0, 5).join(', ')}
+          </Text>
+        )}
       </View>
 
-      {/* Primary Goal */}
-      {result.personalInfo.primaryGoal && (
+      {/* Communication Style */}
+      {result.personalization?.chatPersona && (
         <View style={[styles.card, styles.goalCard]}>
-          <Text style={styles.goalTitle}>Your Fulfillment Driver</Text>
-          <Text style={styles.goalText}>"{result.personalInfo.primaryGoal}"</Text>
+          <Text style={styles.goalTitle}>Your AI Chat Style</Text>
+          <Text style={styles.goalText}>
+            Communication: {result.personalization.chatPersona.communicationStyle}
+          </Text>
+          <Text style={styles.goalText}>
+            Support Level: {result.personalization.chatPersona.emotionalSupport}
+          </Text>
         </View>
       )}
 
@@ -216,5 +232,22 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
+  },
+  focusAreasContainer: {
+    marginTop: theme.spacing.md,
+    padding: theme.spacing.sm,
+    backgroundColor: '#FEF3C7',
+    borderRadius: theme.borderRadius.md,
+  },
+  focusAreasTitle: {
+    ...theme.typography.caption,
+    color: '#92400E',
+    fontWeight: '600',
+    marginBottom: theme.spacing.xs,
+  },
+  focusAreasText: {
+    ...theme.typography.caption,
+    color: '#92400E',
+    textTransform: 'capitalize',
   },
 });
