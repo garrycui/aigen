@@ -36,7 +36,7 @@ interface DynamicPersonalizationProfile extends PersonalizationProfile {
 const personalizationCache: Record<string, DynamicPersonalizationProfile | null> = {};
 
 export function useDynamicPersonalization(userId: string) {
-  const { getDocument, updateDocument, createDocument } = useFirebase();
+  const { getDocument, updateDocument, createDocument, updateUserPersonalization } = useFirebase();
   const [personalization, setPersonalization] = useState<DynamicPersonalizationProfile | null>(null);
   const [loading, setLoading] = useState(true); // Start with loading true
 
@@ -86,24 +86,28 @@ export function useDynamicPersonalization(userId: string) {
 
     try {
       const updatedData = {
+        ...personalization,
         ...updates,
         lastUpdated: new Date().toISOString(),
         updateCount: (personalization.updateCount || 0) + 1
       };
 
-      await updateDocument('userPersonalization', userId, updatedData);
+      // Use updateUserPersonalization instead of updateDocument
+      const result = await updateUserPersonalization(userId, updatedData);
       
-      // Update cache
-      const newPersonalization = { ...personalization, ...updatedData };
-      personalizationCache[userId] = newPersonalization;
-      setPersonalization(newPersonalization);
+      if (result.success) {
+        // Update cache
+        personalizationCache[userId] = updatedData;
+        setPersonalization(updatedData);
+        console.log('Debug - Personalization updated successfully');
+      }
       
-      return { success: true };
+      return result;
     } catch (error) {
       console.error('Error updating personalization:', error);
       return { success: false, error };
     }
-  }, [userId, personalization, updateDocument]);
+  }, [userId, personalization, updateUserPersonalization]);
 
   // Initialize from assessment
   const initializeFromAssessment = useCallback(async (
@@ -111,6 +115,8 @@ export function useDynamicPersonalization(userId: string) {
     assessmentId: string
   ) => {
     if (!userId) return;
+
+    console.log('Debug - Initializing personalization from assessment for user:', userId);
 
     const initialPersonalization: DynamicPersonalizationProfile = {
       ...assessmentResult.personalization,
@@ -145,15 +151,21 @@ export function useDynamicPersonalization(userId: string) {
     };
 
     try {
-      await updateDocument('userPersonalization', userId, initialPersonalization);
-      personalizationCache[userId] = initialPersonalization;
-      setPersonalization(initialPersonalization);
-      return { success: true };
+      // Use updateUserPersonalization to ensure document creation
+      const result = await updateUserPersonalization(userId, initialPersonalization);
+      
+      if (result.success) {
+        personalizationCache[userId] = initialPersonalization;
+        setPersonalization(initialPersonalization);
+        console.log('Debug - Personalization initialized successfully');
+      }
+      
+      return result;
     } catch (error) {
       console.error('Error initializing personalization:', error);
       return { success: false, error };
     }
-  }, [userId, updateDocument]);
+  }, [userId, updateUserPersonalization]);
 
   useEffect(() => {
     if (userId) {

@@ -838,19 +838,37 @@ export async function analyzeAndSaveAssessment(
 ): Promise<AssessmentResult> {
   const result = generateAssessmentResult(responses);
   
-  // Only save the computed result, not raw responses
+  // Save the assessment with both raw responses and computed result
   const assessmentData = {
     userId,
-    result, // Only the processed assessment result
+    responses, // Raw assessment responses
+    result, // Computed assessment result with personalization
     createdAt: new Date(),
   };
 
-  await firebase.saveAssessment(userId, assessmentData);
-  await firebase.updateUserProfile(userId, {
+  console.log('Debug - Saving assessment data to Firebase...');
+  const saveResult = await firebase.saveAssessment(userId, assessmentData);
+  
+  if (!saveResult.success) {
+    throw new Error(`Failed to save assessment: ${saveResult.error}`);
+  }
+  
+  console.log('Debug - Updating user profile...');
+  const profileResult = await firebase.updateUserProfile(userId, {
     hasCompletedAssessment: true,
     mbtiType: result.mbtiType,
     name: result.personalInfo.name,
+    lastAssessmentDate: new Date().toISOString(),
   });
+  
+  if (!profileResult.success) {
+    console.warn('Failed to update user profile:', profileResult.error);
+    // Don't fail the whole process for profile update failure
+  }
 
-  return result;
+  // Return the assessment result with the Firebase document ID for reference
+  return {
+    ...result,
+    assessmentDate: saveResult.data?.id || result.assessmentDate
+  };
 }

@@ -102,10 +102,23 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const updateDocument = async (collectionName: string, documentId: string, data: any): Promise<FirebaseResponse> => {
     try {
       const docRef = doc(db, collectionName, documentId);
-      await updateDoc(docRef, {
-        ...data,
-        updatedAt: serverTimestamp()
-      });
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        // Document exists, update it
+        await updateDoc(docRef, {
+          ...data,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        // Document doesn't exist, create it with setDoc
+        await setDoc(docRef, {
+          ...data,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
+      
       return { success: true, data: { id: documentId } };
     } catch (error) {
       console.error(`Error updating document in ${collectionName}:`, error);
@@ -260,7 +273,17 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateUserPersonalization = async (userId: string, updates: any): Promise<FirebaseResponse> => {
-    return await updateDocument('userPersonalization', userId, updates);
+    try {
+      const docRef = doc(db, 'userPersonalization', userId);
+      await setDoc(docRef, {
+        ...updates,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      return { success: true, data: { id: userId } };
+    } catch (error) {
+      console.error('Error updating user personalization:', error);
+      return { success: false, error: 'Failed to update user personalization' };
+    }
   };
 
   const saveInteraction = async (userId: string, interactionData: any): Promise<FirebaseResponse> => {

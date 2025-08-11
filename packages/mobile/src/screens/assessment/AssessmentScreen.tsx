@@ -398,17 +398,24 @@ export default function AssessmentScreen() {
       await AsyncStorage.removeItem(ASSESSMENT_PROGRESS_KEY);
       
       // 1. Generate and save static baseline assessment
+      console.log('Debug - Saving assessment to Firebase...');
       const result = await analyzeAndSaveAssessment(user.id, finalResponses, {
         saveAssessment,
         updateUserProfile,
       });
+      console.log('Debug - Assessment saved successfully');
       
       // 2. Initialize dynamic personalization from assessment result (NEW!)
       addBotMessage("Creating your personalized AI profile...");
       
+      console.log('Debug - Initializing dynamic personalization...');
       const initResult = await initializeFromAssessment(result, result.assessmentDate);
-      if (!initResult?.success) {
-        console.warn('Failed to initialize dynamic personalization, but assessment was saved');
+      
+      if (initResult?.success) {
+        console.log('Debug - Dynamic personalization initialized successfully');
+      } else {
+        console.warn('Failed to initialize dynamic personalization:', initResult?.error);
+        // Don't fail the whole process, just log the warning
       }
       
       // 3. Clear the assessment cache so ProfileScreen will fetch fresh data
