@@ -1,32 +1,43 @@
-import React from 'react';
-import ChatMessageComponent from '../../components/chat/ChatMessage';
+import React, { useEffect } from 'react';
+import { FlatList, View } from 'react-native';
+import ChatMessage from '../../components/chat/ChatMessage';
 
-type ChatMessagesListProps = {
-  messages: Array<any>;
-  suggestedQuestions?: string[];
-  onAskSuggested?: (question: string) => void;
-  isLatest?: boolean;
-};
-
-const ChatMessagesList = React.memo(function ChatMessagesList({
+export default function ChatMessagesList({
   messages,
   suggestedQuestions,
   onAskSuggested,
-  isLatest,
-}: ChatMessagesListProps) {
+  scrollViewRef,
+}: {
+  messages: any[];
+  suggestedQuestions: string[];
+  onAskSuggested: (q: string) => void;
+  scrollViewRef: any;
+}) {
+  useEffect(() => {
+    if (scrollViewRef?.current && messages.length > 0) {
+      scrollViewRef.current.scrollToEnd({ animated: true });
+    }
+  }, [messages, scrollViewRef]);
+
   return (
-    <>
-      {messages.map((msg, idx) => (
-        <ChatMessageComponent
-          key={msg.id}
-          message={msg}
-          isLatest={isLatest}
-          suggestedQuestions={suggestedQuestions}
+    <FlatList
+      ref={scrollViewRef}
+      data={messages}
+      keyExtractor={item => item.id}
+      renderItem={({ item, index }) => (
+        <ChatMessage
+          message={item}
+          isLatest={index === messages.length - 1}
+          suggestedQuestions={
+            item.role === 'assistant' && item.id.startsWith('try-asking')
+              ? suggestedQuestions
+              : []
+          }
           onAskSuggested={onAskSuggested}
         />
-      ))}
-    </>
+      )}
+      contentContainerStyle={{ paddingBottom: 16 }}
+      showsVerticalScrollIndicator={false}
+    />
   );
-});
-
-export default ChatMessagesList;
+}

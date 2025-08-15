@@ -68,11 +68,27 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const app = getApp();
   const db = getFirestore(app);
 
+  // Utility to recursively remove undefined fields from an object
+  function removeUndefinedFields(obj: any): any {
+    if (Array.isArray(obj)) {
+      return obj.map(removeUndefinedFields);
+    } else if (obj && typeof obj === 'object') {
+      return Object.entries(obj).reduce((acc, [key, value]) => {
+        if (value !== undefined) {
+          acc[key] = removeUndefinedFields(value);
+        }
+        return acc;
+      }, {} as any);
+    }
+    return obj;
+  }
+
   // Generic CRUD operations
   const createDocument = async (collectionName: string, data: any): Promise<FirebaseResponse> => {
     try {
+      const cleanData = removeUndefinedFields(data);
       const docRef = await addDoc(collection(db, collectionName), {
-        ...data,
+        ...cleanData,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -101,19 +117,20 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   const updateDocument = async (collectionName: string, documentId: string, data: any): Promise<FirebaseResponse> => {
     try {
+      const cleanData = removeUndefinedFields(data);
       const docRef = doc(db, collectionName, documentId);
       const docSnap = await getDoc(docRef);
       
       if (docSnap.exists()) {
         // Document exists, update it
         await updateDoc(docRef, {
-          ...data,
+          ...cleanData,
           updatedAt: serverTimestamp()
         });
       } else {
         // Document doesn't exist, create it with setDoc
         await setDoc(docRef, {
-          ...data,
+          ...cleanData,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -210,9 +227,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   // Chat operations
   const saveChatSession = async (userId: string, sessionData: any): Promise<FirebaseResponse> => {
     try {
+      const cleanData = removeUndefinedFields(sessionData);
       const sessionRef = await addDoc(collection(db, 'chatSessions'), {
         userId,
-        ...sessionData,
+        ...cleanData,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -233,9 +251,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   const saveChatMessage = async (sessionId: string, message: any): Promise<FirebaseResponse> => {
     try {
+      const cleanMessage = removeUndefinedFields(message);
       const messageRef = await addDoc(collection(db, 'chatMessages'), {
         sessionId,
-        ...message,
+        ...cleanMessage,
         createdAt: serverTimestamp()
       });
       return { success: true, data: { id: messageRef.id } };
@@ -274,9 +293,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   const updateUserPersonalization = async (userId: string, updates: any): Promise<FirebaseResponse> => {
     try {
+      const cleanUpdates = removeUndefinedFields(updates);
       const docRef = doc(db, 'userPersonalization', userId);
       await setDoc(docRef, {
-        ...updates,
+        ...cleanUpdates,
         updatedAt: serverTimestamp()
       }, { merge: true });
       return { success: true, data: { id: userId } };
@@ -288,9 +308,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   const saveInteraction = async (userId: string, interactionData: any): Promise<FirebaseResponse> => {
     try {
+      const cleanData = removeUndefinedFields(interactionData);
       const interactionRef = await addDoc(collection(db, 'userInteractions'), {
         userId,
-        ...interactionData,
+        ...cleanData,
         createdAt: serverTimestamp()
       });
       return { success: true, data: { id: interactionRef.id } };
@@ -309,9 +330,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       const batch = writeBatch(db);
       
       updates.forEach(({ userId, data }) => {
+        const cleanData = removeUndefinedFields(data);
         const userRef = doc(db, 'userPersonalization', userId);
         batch.update(userRef, {
-          ...data,
+          ...cleanData,
           lastUpdated: serverTimestamp()
         });
       });

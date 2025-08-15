@@ -58,6 +58,9 @@ export interface PersonalizationProfile {
       learningPreference: 'visual' | 'auditory' | 'kinesthetic' | 'reading' | 'mixed';
     };
   };
+
+  // Reference to the assessment this profile is based on
+  baseAssessmentId?: string;
 }
 
 export interface AssessmentResult {
@@ -796,7 +799,8 @@ export const generatePersonalizationProfile = (
       }
     },
     
-    servicePersonalization // Comprehensive service recommendations
+    servicePersonalization, // Comprehensive service recommendations
+    baseAssessmentId: undefined // Placeholder for reference to the assessment
   };
 };
 

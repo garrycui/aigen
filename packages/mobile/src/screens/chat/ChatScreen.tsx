@@ -5,11 +5,12 @@ import { MessageCircle, Sparkles } from 'lucide-react-native';
 import { theme } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
+import { useInteractionTracking } from '../../hooks/useInteractionTracking';
+import { useDynamicPersonalization } from '../../hooks/useDynamicPersonalization';
 // Import chat service and profiler (implement these in lib/chat/)
-import { ChatService, ChatMessage, UserContext } from '../../lib/chat/chatService';
+import { ChatService, ChatMessage, UserContext, ChatSession } from '../../lib/chat/chatService';
 import { AudioChatService } from '../../lib/audio/AudioChatService';
 import { AudioTranscript } from '../../lib/audio/AudioRecorder';
-import { getPERMAGuidanceAdvanced } from '../../lib/chat/permaGuide';
 // Import chat components (implement these in components/chat/)
 import ChatInput from '../../components/chat/ChatInput';
 import ChatHeader from './ChatHeader';
@@ -22,6 +23,18 @@ interface ExtendedChatMessage extends ChatMessage {
   isAudioMessage?: boolean;
 }
 
+// Utility to remove undefined fields (keep in sync with FirebaseContext)
+function removeUndefinedFields(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(removeUndefinedFields);
+  if (obj && typeof obj === 'object') {
+    return Object.entries(obj).reduce((acc, [k, v]) => {
+      if (v !== undefined) acc[k] = removeUndefinedFields(v);
+      return acc;
+    }, {} as any);
+  }
+  return obj;
+}
+
 export default function ChatScreen() {
   const { user } = useAuth();
   const {
@@ -31,11 +44,13 @@ export default function ChatScreen() {
     updateChatSession,
     saveChatMessage,
     getChatMessages,
-    saveUserInsights,
   } = useFirebase();
 
+  const { personalization } = useDynamicPersonalization(user?.id || '');
+  const { trackChatInteraction, trackAnalyticsResult } = useInteractionTracking(user?.id || '');
+
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [userContext, setUserContext] = useState<UserContext | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -49,21 +64,37 @@ export default function ChatScreen() {
   const audioChatService = AudioChatService.getInstance();
 
   useEffect(() => {
-    if (user) {
-      initializeChat();
-    }
+    if (user) initializeChat();
   }, [user]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (messages.length === 0) return;
-      const { insights, suggestedQuestions } = await chatService.getUserInsightsAndSuggestions(messages);
-      if (!cancelled) {
-        setUserInsights(insights);
-        setSuggestedQuestions(suggestedQuestions);
-        if (messages.length > 0 && messages.length % 10 === 0) {
-          if (insights) {
+      // Run analytics after every 10 messages or as needed
+      if (messages.length % 10 === 0) {
+        setIsLoading(true);
+        const analytics = await chatService.analyzeConversation(currentSession!, personalization);
+        if (!cancelled) {
+          setUserInsights(analytics.personalizationUpdates);
+          setSuggestedQuestions(analytics.suggestedQuestions);
+          // Track analytics result to update personalization
+          trackAnalyticsResult({
+            sessionId: currentSession!.id,
+            summary: analytics.summary,
+            permaInsights: analytics.permaInsights,
+            personalizationUpdates: analytics.personalizationUpdates,
+            messageCount: messages.length,
+            timestamp: new Date().toISOString()
+          });
+        }
+        setIsLoading(false);
+      } else {
+        const { insights, suggestedQuestions } = await chatService.getUserInsightsAndSuggestions(messages);
+        if (!cancelled) {
+          setUserInsights(insights);
+          setSuggestedQuestions(suggestedQuestions);
+          if (messages.length > 0 && messages.length % 10 === 0 && insights) {
             const summary = chatService.generateSummaryMessage
               ? chatService.generateSummaryMessage(insights)
               : `Summary: ${JSON.stringify(insights)}`;
@@ -86,7 +117,6 @@ export default function ChatScreen() {
   }, [messages]);
 
   useEffect(() => {
-    // Inject "Try asking" system message every 5 user/assistant messages if there are suggested questions
     if (
       suggestedQuestions.length > 0 &&
       messages.length > 0 &&
@@ -94,7 +124,6 @@ export default function ChatScreen() {
     ) {
       injectTryAskingMessage();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, suggestedQuestions]);
 
   const injectTryAskingMessage = () => {
@@ -130,38 +159,18 @@ export default function ChatScreen() {
           interests: assessment.interests,
           name: assessment.nickname,
         });
-
-        // --- Show happiness guidance as a chat message (for test/feedback) ---
-        if (assessment.perma && assessment.mbti_type && assessment.permaAnswers) {
-          const happinessGuidance = getPERMAGuidanceAdvanced({
-            perma: assessment.perma,
-            mbtiType: assessment.mbti_type,
-            permaAnswers: assessment.permaAnswers
-          });
-          const guidanceMsg: ExtendedChatMessage = {
-            id: `happiness-guidance-${Date.now()}`,
-            content: `🧭 Happiness Guidance:\n${happinessGuidance}\n\n(Please let us know if this matches what you're looking for!)`,
-            role: 'assistant',
-            timestamp: new Date().toISOString(),
-            sentiment: 'neutral',
-            isAudioMessage: false
-          };
-          setMessages(prev => [...prev, guidanceMsg]);
-        }
-        // ---------------------------------------------------------------
       }
+
       const sessionsResult = await getChatSessions(user!.id);
       if (sessionsResult.success && sessionsResult.data?.length > 0) {
-        const recentSession = sessionsResult.data
-          .sort(
-            (a: { updatedAt: string }, b: { updatedAt: string }) =>
-              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-          )[0];
-        setCurrentSessionId(recentSession.id);
-        await loadChatMessages(recentSession.id);
+        const recent = sessionsResult.data
+          .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+        setCurrentSession(recent);
+        await loadChatMessages(recent.id);
       } else {
         await createNewSession();
       }
+
       if (!sessionsResult.success || sessionsResult.data?.length === 0) {
         setTimeout(() => sendWelcomeMessage(), 1000);
       }
@@ -175,20 +184,16 @@ export default function ChatScreen() {
 
   const createNewSession = async () => {
     try {
-      const sessionData = {
-        userId: user!.id,
-        title: 'New Chat',
-        messages: [],
-        userContext,
-        summary: ''
-      };
+      const session = await chatService.createChatSession(user!.id, userContext || undefined);
+      const sessionData = { ...session, userId: user!.id, title: 'New Chat', userContext, summary: '' };
       const result = await saveChatSession(user!.id, sessionData);
       if (result.success) {
-        setCurrentSessionId(result.data.id);
+        const full = { ...session, id: result.data.id };
+        setCurrentSession(full);
         setMessages([]);
       }
-    } catch (error) {
-      console.error('Error creating new session:', error);
+    } catch (e) {
+      console.error('Error creating new session:', e);
     }
   };
 
@@ -206,234 +211,243 @@ export default function ChatScreen() {
             sentiment: msg.sentiment,
             audioUri: msg.audioUri,
             transcript: msg.transcript,
-            isAudioMessage: msg.isAudioMessage || false
+            isAudioMessage: msg.isAudioMessage,
           }));
         setMessages(sortedMessages);
       }
-    } catch (error) {
-      console.error('Error loading chat messages:', error);
+    } catch (e) {
+      console.error('Error loading chat messages:', e);
     }
   };
 
   const sendWelcomeMessage = () => {
-    const welcomeMessage: ExtendedChatMessage = {
+    const welcomeMsg: ExtendedChatMessage = {
       id: `welcome-${Date.now()}`,
-      content: `Hey there! 👋 I'm your AI companion, here to help you navigate this exciting world of artificial intelligence! 
-
-Whether you're curious about AI, worried about changes, or ready to dive deep into new tech - I've got your back! 
-
-What's on your mind today? 🤔`,
+      content: "👋 Hi! I'm your AI companion. How can I help you today?",
       role: 'assistant',
       timestamp: new Date().toISOString(),
       sentiment: 'positive',
       isAudioMessage: false
     };
-    setMessages([welcomeMessage]);
-    if (currentSessionId) {
-      saveChatMessage(currentSessionId, welcomeMessage);
-    }
+    setMessages([welcomeMsg]);
   };
 
-  const handleSendMessage = useCallback(async (messageText: string) => {
-    if (!currentSessionId || !user) return;
-    const userMessage: ExtendedChatMessage = {
+  const handleSendMessage = async (text: string) => {
+    if (!currentSession || !user) return;
+    setIsTyping(true);
+    setIsLoading(true);
+
+    const userMsg: ExtendedChatMessage = {
       id: `user-${Date.now()}`,
-      content: messageText,
+      content: text,
       role: 'user',
       timestamp: new Date().toISOString(),
+      sentiment: ChatService.analyzeSentiment(text),
       isAudioMessage: false
     };
+    setMessages(prev => [...prev, userMsg]);
+    await saveChatMessage(currentSession.id, removeUndefinedFields(userMsg));
 
-    // Add user message and "AI is thinking..." system message
-    const thinkingMessage: ExtendedChatMessage = {
+    // Track chat interaction
+    trackChatInteraction({
+      messageId: userMsg.id,
+      userMessage: text,
+      aiResponse: '',
+      topics: [],
+      sentiment: userMsg.sentiment || 'neutral',
+      engagementLevel: 5,
+      timestamp: userMsg.timestamp,
+      threadId: currentSession.threadId,
+    });
+
+    // Show "AI is thinking..." message
+    const thinkingMsg: ExtendedChatMessage = {
       id: `thinking-${Date.now()}`,
-      content: "AI is thinking...",
+      content: 'AI is thinking...',
       role: 'assistant',
       timestamp: new Date().toISOString(),
       isAudioMessage: false
     };
-
-    setMessages(prev => [...prev, userMessage, thinkingMessage]);
-    setIsLoading(true);
-    setIsTyping(true);
-
-    // Scroll to end after sending
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+    setMessages(prev => [...prev, thinkingMsg]);
 
     try {
-      await saveChatMessage(currentSessionId, userMessage);
-
-      const updatedHistory = [...messages, userMessage];
-      const response = await chatService.generateResponse(
-        messageText,
-        updatedHistory,
-        userContext || undefined
+      const { response, sentiment, threadId, runId } = await chatService.generateResponse(
+        text,
+        currentSession,
+        userContext || undefined,
+        personalization // <-- already passing full personalization
       );
+      // If threadId changed, update session in Firebase and local state
+      if (threadId && threadId !== currentSession.threadId) {
+        await updateChatSession(currentSession.id, { threadId });
+        setCurrentSession(prev => prev ? { ...prev, threadId } : prev);
+      }
+      // Remove "AI is thinking..." message
+      setMessages(prev => prev.filter(m => m.id !== thinkingMsg.id));
+      // Ensure sentiment is one of the allowed values
       const allowedSentiments = ['positive', 'negative', 'neutral'] as const;
-      const aiMessage: ExtendedChatMessage = {
-        id: `ai-${Date.now()}`,
-        content: response.response,
+      const safeSentiment = allowedSentiments.includes(sentiment as any) ? sentiment as 'positive' | 'negative' | 'neutral' : 'neutral';
+      const aiMsg: ExtendedChatMessage = {
+        id: `assistant-${Date.now()}`,
+        content: response,
         role: 'assistant',
         timestamp: new Date().toISOString(),
-        sentiment: allowedSentiments.includes(response.sentiment as any)
-          ? (response.sentiment as 'positive' | 'negative' | 'neutral')
-          : undefined,
-        isAudioMessage: false
+        sentiment: safeSentiment,
+        isAudioMessage: false,
+        threadId,
+        runId
       };
+      setMessages(prev => [...prev, aiMsg]);
+      await saveChatMessage(currentSession.id, removeUndefinedFields(aiMsg));
 
-      // Replace "AI is thinking..." with actual AI message
-      setMessages(prev => {
-        const withoutThinking = prev.filter(m => !m.id.startsWith('thinking-'));
-        return [...withoutThinking, aiMessage];
+      // Track chat interaction with AI response
+      trackChatInteraction({
+        messageId: aiMsg.id,
+        userMessage: text,
+        aiResponse: response,
+        topics: [],
+        sentiment: aiMsg.sentiment || 'neutral',
+        engagementLevel: 5,
+        timestamp: aiMsg.timestamp,
+        threadId,
+        runId
       });
-
-      await saveChatMessage(currentSessionId, aiMessage);
-
-      // Scroll to end after AI response
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-
-    } catch (error) {
-      console.error('Error sending message:', error);
-      const errorMessage: ExtendedChatMessage = {
-        id: `error-${Date.now()}`,
-        content: "Oops! I had a little hiccup there. Could you try asking me again? 😅",
-        role: 'assistant',
-        timestamp: new Date().toISOString(),
-        sentiment: 'neutral',
-        isAudioMessage: false
-      };
-      setMessages(prev => {
-        const withoutThinking = prev.filter(m => !m.id.startsWith('thinking-'));
-        return [...withoutThinking, errorMessage];
-      });
+    } catch (e) {
+      setMessages(prev => prev.filter(m => m.id !== thinkingMsg.id));
+      Alert.alert('Error', 'Failed to get AI response.');
     } finally {
-      setIsLoading(false);
       setIsTyping(false);
+      setIsLoading(false);
     }
-  }, [currentSessionId, user, messages, userContext, chatService, saveChatMessage]);
+  };
 
-  const handleSendAudioMessage = useCallback(async (
+  const handleSendAudioMessage = async (
     text: string,
     language?: string,
     audioUri?: string,
     transcript?: AudioTranscript
   ) => {
-    if (!currentSessionId || !user) return;
-    const userMessage: ExtendedChatMessage = {
+    if (!currentSession || !user) return;
+    setIsTyping(true);
+    setIsLoading(true);
+
+    const userMsg: ExtendedChatMessage = {
       id: `user-audio-${Date.now()}`,
       content: text,
       role: 'user',
       timestamp: new Date().toISOString(),
+      sentiment: ChatService.analyzeSentiment(text),
+      isAudioMessage: true,
       audioUri,
-      transcript,
-      isAudioMessage: true
+      transcript
     };
-    const updatedHistory = [...messages, userMessage];
-    setMessages(prev => [...prev, userMessage]);
-    setIsLoading(true);
-    setIsTyping(true);
+    setMessages(prev => [...prev, userMsg]);
+    await saveChatMessage(currentSession.id, removeUndefinedFields(userMsg));
+
+    // Track chat interaction
+    trackChatInteraction({
+      messageId: userMsg.id,
+      userMessage: text,
+      aiResponse: '',
+      topics: [],
+      sentiment: userMsg.sentiment || 'neutral',
+      engagementLevel: 5,
+      timestamp: userMsg.timestamp,
+      threadId: currentSession.threadId,
+    });
+
+    // Show "AI is thinking..." message
+    const thinkingMsg: ExtendedChatMessage = {
+      id: `thinking-${Date.now()}`,
+      content: 'AI is thinking...',
+      role: 'assistant',
+      timestamp: new Date().toISOString(),
+      isAudioMessage: false
+    };
+    setMessages(prev => [...prev, thinkingMsg]);
+
     try {
-      await saveChatMessage(currentSessionId, userMessage);
-
-      const audioResponse = await audioChatService.processAudioInput(
-        audioUri || text,
-        updatedHistory,
-        userContext || undefined
+      const { response, sentiment, threadId, runId } = await chatService.generateResponse(
+        text,
+        currentSession,
+        userContext || undefined,
+        personalization // <-- already passing full personalization
       );
-      const aiMessage: ExtendedChatMessage = {
-        id: `ai-audio-${Date.now()}`,
-        content: audioResponse.response.content,
+      // If threadId changed, update session in Firebase and local state
+      if (threadId && threadId !== currentSession.threadId) {
+        await updateChatSession(currentSession.id, { threadId });
+        setCurrentSession(prev => prev ? { ...prev, threadId } : prev);
+      }
+      setMessages(prev => prev.filter(m => m.id !== thinkingMsg.id));
+      // Ensure sentiment is one of the allowed values
+      const allowedSentiments = ['positive', 'negative', 'neutral'] as const;
+      const safeSentiment = allowedSentiments.includes(sentiment as any) ? sentiment as 'positive' | 'negative' | 'neutral' : 'neutral';
+      const aiMsg: ExtendedChatMessage = {
+        id: `assistant-${Date.now()}`,
+        content: response,
         role: 'assistant',
         timestamp: new Date().toISOString(),
-        sentiment: audioResponse.response.sentiment,
-        isAudioMessage: true,
-        transcript
+        sentiment: safeSentiment,
+        isAudioMessage: false,
+        threadId,
+        runId
       };
-      setMessages(prev => [...prev, aiMessage]);
-      await saveChatMessage(currentSessionId, aiMessage);
-    } catch (error) {
-      console.error('Error sending audio message:', error);
-      const errorMessage: ExtendedChatMessage = {
-        id: `error-audio-${Date.now()}`,
-        content: "Oops! I had a little hiccup there. Could you try sending that audio message again? 😅",
-        role: 'assistant',
-        timestamp: new Date().toISOString(),
-        sentiment: 'neutral',
-        isAudioMessage: true
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => [...prev, aiMsg]);
+      await saveChatMessage(currentSession.id, removeUndefinedFields(aiMsg));
+
+      // Track chat interaction with AI response
+      trackChatInteraction({
+        messageId: aiMsg.id,
+        userMessage: text,
+        aiResponse: response,
+        topics: [],
+        sentiment: aiMsg.sentiment || 'neutral',
+        engagementLevel: 5,
+        timestamp: aiMsg.timestamp,
+        threadId,
+        runId
+      });
+    } catch (e) {
+      setMessages(prev => prev.filter(m => m.id !== thinkingMsg.id));
+      Alert.alert('Error', 'Failed to get AI response.');
     } finally {
-      setIsLoading(false);
       setIsTyping(false);
+      setIsLoading(false);
     }
-  }, [currentSessionId, user, messages, userContext, audioChatService, saveChatMessage]);
+  };
 
-  // Scroll to end when a new message is added
-  useEffect(() => {
-    if (!isInitializing && messages.length > 0) {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }
-  }, [messages.length, isInitializing]);
+  const handleAskSuggested = (q: string) => {
+    setInputValue(q);
+  };
 
-  // Only show the last N messages (e.g., 20)
-  const LAST_N = 20;
-  const visibleMessages = messages.slice(-LAST_N);
-
-  // FlatList render function for messages
-  const renderItem = useCallback(
-    ({ item, index }: { item: ExtendedChatMessage; index: number }) => (
-      <ChatMessagesList
-        messages={[item]}
-        suggestedQuestions={suggestedQuestions}
-        onAskSuggested={handleSendMessage}
-        isLatest={index === visibleMessages.length - 1}
-      />
-    ),
-    [suggestedQuestions, handleSendMessage, visibleMessages.length]
-  );
-
+  // UI rendering
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: theme.colors.gray[50] }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
     >
+      <ChatHeader session={currentSession} isLoading={isLoading || isInitializing} />
       <View style={{ flex: 1 }}>
-        <ChatHeader isInitializing={isInitializing} />
-        {isInitializing ? (
-          <View style={{ alignItems: 'center', marginTop: theme.spacing[8] }}>
-            <ActivityIndicator size="large" color={theme.colors.primary.main} />
-            <Text style={{ color: theme.colors.gray[600], marginTop: theme.spacing[2] }}>
-              Loading your chat...
-            </Text>
+        <ChatMessagesList
+          messages={messages}
+          suggestedQuestions={suggestedQuestions}
+          onAskSuggested={handleAskSuggested}
+          scrollViewRef={scrollViewRef}
+        />
+        {(isLoading || isInitializing) && (
+          <View style={{ alignItems: 'center', marginVertical: 16 }}>
+            <ActivityIndicator size="small" color={theme.colors.primary.main} />
           </View>
-        ) : (
-          <FlatList
-            ref={scrollViewRef}
-            data={visibleMessages}
-            renderItem={renderItem}
-            keyExtractor={item => item.id}
-            contentContainerStyle={{ paddingBottom: theme.spacing[8], paddingVertical: theme.spacing[2] }}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-          />
         )}
-        <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.gray[200], backgroundColor: theme.colors.white }}>
-          <ChatInput
-            onSendMessage={handleSendMessage}
-            onSendAudioMessage={handleSendAudioMessage}
-            isLoading={isLoading || isTyping}
-            inputValue={inputValue}
-            setInputValue={setInputValue}
-            placeholder="Type a message or use the mic..."
-          />
-        </View>
       </View>
+      <ChatInput
+        onSendMessage={handleSendMessage}
+        onSendAudioMessage={handleSendAudioMessage}
+        isLoading={isLoading || isTyping}
+        inputValue={inputValue}
+        setInputValue={setInputValue}
+      />
     </KeyboardAvoidingView>
   );
 }

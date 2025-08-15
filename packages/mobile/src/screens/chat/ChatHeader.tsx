@@ -1,28 +1,34 @@
 import React from 'react';
-import { View, Text, ActivityIndicator } from 'react-native';
-import { MessageCircle } from 'lucide-react-native';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { theme } from '../../theme';
 
-export default function ChatHeader({ isInitializing }: { isInitializing: boolean }) {
+export default function ChatHeader({ session, isLoading }: { session: any; isLoading: boolean }) {
   return (
-    <View style={{
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: theme.spacing[4],
-      backgroundColor: theme.colors.primary.main,
-    }}>
-      <MessageCircle size={24} color={theme.colors.white} />
-      <Text style={{
-        color: theme.colors.white,
-        fontSize: theme.typography.fontSize.lg,
-        fontWeight: '700',
-        marginLeft: theme.spacing[2]
-      }}>
-        AI Chat
+    <View style={styles.header}>
+      <Text style={styles.title}>
+        {session?.title || 'Chat'}
       </Text>
-      {isInitializing && (
-        <ActivityIndicator size="small" color={theme.colors.white} style={{ marginLeft: theme.spacing[2] }} />
+      {isLoading && (
+        <ActivityIndicator size="small" color={theme.colors.primary.main} style={{ marginLeft: 8 }} />
       )}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  header: {
+    paddingTop: theme.spacing[5],
+    paddingBottom: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    backgroundColor: theme.colors.white,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.gray[200],
+  },
+  title: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.bold,
+    color: theme.colors.primary.main,
+  },
+});

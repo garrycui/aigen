@@ -3,27 +3,28 @@ import { useFirebase } from '../context/FirebaseContext';
 import { PersonalizationProfile } from '../lib/assessment/analyzer';
 
 interface DynamicPersonalizationProfile extends PersonalizationProfile {
-  // Enhanced with learning data
-  chatPersona: PersonalizationProfile['chatPersona'] & {
-    learningPatterns: {
-      responsePreferences: string[];
-      engagementTriggers: string[];
-      avoidancePatterns: string[];
+  // All dynamic/learning fields grouped here
+  learning?: {
+    responsePreferences?: string[];
+    engagementTriggers?: string[];
+    avoidancePatterns?: string[];
+    dynamicInterests?: {
+      emerging?: string[];
+      declining?: string[];
+      seasonal?: Record<string, string[]>;
+    };
+    progressTracking?: {
+      trendingUp?: string[];
+      needsAttention?: string[];
+      interventionSuccess?: Record<string, number>;
     };
   };
-  contentPreferences: PersonalizationProfile['contentPreferences'] & {
-    dynamicInterests: {
-      emerging: string[];
-      declining: string[];
-      seasonal: Record<string, string[]>;
-    };
-  };
-  wellnessProfile: PersonalizationProfile['wellnessProfile'] & {
-    progressTracking: {
-      trendingUp: string[];
-      needsAttention: string[];
-      interventionSuccess: Record<string, number>;
-    };
+  // Quick signals (flattened for easy update)
+  signals?: {
+    dailyMessageCount?: number;
+    recentPositiveInteractions?: number;
+    highEngagementStreak?: number;
+    lastActiveTime?: string;
   };
   // Metadata
   baseAssessmentId: string;
@@ -32,13 +33,12 @@ interface DynamicPersonalizationProfile extends PersonalizationProfile {
   version: string;
 }
 
-// Cache for personalization data
 const personalizationCache: Record<string, DynamicPersonalizationProfile | null> = {};
 
 export function useDynamicPersonalization(userId: string) {
-  const { getDocument, updateDocument, createDocument, updateUserPersonalization } = useFirebase();
+  const { getDocument, updateUserPersonalization } = useFirebase();
   const [personalization, setPersonalization] = useState<DynamicPersonalizationProfile | null>(null);
-  const [loading, setLoading] = useState(true); // Start with loading true
+  const [loading, setLoading] = useState(true);
 
   const fetchPersonalization = useCallback(async (skipCache = false) => {
     if (!userId) {
@@ -78,7 +78,6 @@ export function useDynamicPersonalization(userId: string) {
     }
   }, [userId, getDocument]);
 
-  // Update specific personalization aspects
   const updatePersonalization = useCallback(async (
     updates: Partial<DynamicPersonalizationProfile>
   ) => {
@@ -92,11 +91,9 @@ export function useDynamicPersonalization(userId: string) {
         updateCount: (personalization.updateCount || 0) + 1
       };
 
-      // Use updateUserPersonalization instead of updateDocument
       const result = await updateUserPersonalization(userId, updatedData);
       
       if (result.success) {
-        // Update cache
         personalizationCache[userId] = updatedData;
         setPersonalization(updatedData);
         console.log('Debug - Personalization updated successfully');
@@ -109,7 +106,6 @@ export function useDynamicPersonalization(userId: string) {
     }
   }, [userId, personalization, updateUserPersonalization]);
 
-  // Initialize from assessment
   const initializeFromAssessment = useCallback(async (
     assessmentResult: any, 
     assessmentId: string
@@ -120,38 +116,15 @@ export function useDynamicPersonalization(userId: string) {
 
     const initialPersonalization: DynamicPersonalizationProfile = {
       ...assessmentResult.personalization,
-      chatPersona: {
-        ...assessmentResult.personalization.chatPersona,
-        learningPatterns: {
-          responsePreferences: [],
-          engagementTriggers: [],
-          avoidancePatterns: []
-        }
-      },
-      contentPreferences: {
-        ...assessmentResult.personalization.contentPreferences,
-        dynamicInterests: {
-          emerging: [],
-          declining: [],
-          seasonal: {}
-        }
-      },
-      wellnessProfile: {
-        ...assessmentResult.personalization.wellnessProfile,
-        progressTracking: {
-          trendingUp: [],
-          needsAttention: [],
-          interventionSuccess: {}
-        }
-      },
       baseAssessmentId: assessmentId,
       lastUpdated: new Date().toISOString(),
       updateCount: 0,
-      version: '1.0'
+      version: '1.0',
+      learning: {},
+      signals: {}
     };
 
     try {
-      // Use updateUserPersonalization to ensure document creation
       const result = await updateUserPersonalization(userId, initialPersonalization);
       
       if (result.success) {
