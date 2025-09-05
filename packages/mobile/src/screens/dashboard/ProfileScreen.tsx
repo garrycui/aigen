@@ -27,8 +27,6 @@ import { theme, screenStyles } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { getPersonaPrompt } from '../../lib/chat/persona';
-import { getPERMAGuidance } from '../../lib/chat/permaGuide';
 import { useLatestAssessment, clearAssessmentCache } from '../../hooks/useLatestAssessment';
 
 interface UserProfileData {
