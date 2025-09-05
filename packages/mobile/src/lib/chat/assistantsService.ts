@@ -24,6 +24,11 @@ export interface AnalyticsResult {
   personalizationUpdates: any;
   suggestedQuestions?: string[];
   shouldSummarize: boolean;
+  // Add missing properties for session summarization
+  keyTopics?: string[];
+  emotionalState?: string;
+  userNeeds?: string[];
+  importantContext?: string;
 }
 
 export class AssistantsService {
@@ -35,15 +40,17 @@ export class AssistantsService {
 
   private async apiCall(endpoint: string, method: 'GET' | 'POST' | 'DELETE' = 'GET', data?: any) {
     if (!OPENAI_API_KEY) throw new Error('OpenAI API key not configured');
-    const headers = {
+    
+    const headers: any = {
       'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-      'OpenAI-Beta': 'assistants=v2' // <-- Required for Assistants API
+      'Content-Type': 'application/json'
     };
-    // Add debug logging for request
-    if (method !== 'GET') {
-      console.log('OpenAI API Request:', endpoint, JSON.stringify(data, null, 2));
+    
+    // Only add beta header for assistants endpoints
+    if (endpoint.includes('/threads') || endpoint.includes('/assistants') || endpoint.includes('/runs')) {
+      headers['OpenAI-Beta'] = 'assistants=v2';
     }
+    
     try {
       const res = await axios({
         method,
@@ -54,9 +61,9 @@ export class AssistantsService {
       });
       return res.data;
     } catch (err: any) {
-      // Log response data if available
       if (err.response) {
         console.error('OpenAI API Error:', err.response.status, err.response.data);
+        throw new Error(`API Error: ${err.response.status} - ${err.response.data?.error?.message || 'Unknown error'}`);
       }
       throw err;
     }
@@ -103,49 +110,207 @@ export class AssistantsService {
     throw new Error('Run timed out');
   }
 
-  async runChatAssistant(threadId: string | undefined, userMessage: string, personalizationContext?: string): Promise<AssistantResponse> {
+  async runChatAssistant(
+    threadId: string | undefined, 
+    userMessage: string, 
+    personalizationContext?: string,
+    sessionContext?: string
+  ): Promise<AssistantResponse> {
     // If threadId is missing or invalid, create a new thread
     let validThreadId = threadId;
     if (!validThreadId || typeof validThreadId !== 'string' || !validThreadId.startsWith('thread')) {
-      validThreadId = await this.createThread({ purpose: 'chat' });
+      console.warn('Invalid or missing threadId, creating new thread:', validThreadId);
+      validThreadId = await this.createThread({ purpose: 'chat', recovered: 'true' });
     }
-    this.validateThreadId(validThreadId);
-    await this.addMessageToThread(validThreadId, userMessage, 'user');
-    const runBody: any = { assistant_id: CHAT_ASSISTANT_ID, temperature: 0.7 };
-    if (personalizationContext) runBody.additional_instructions = personalizationContext;
-    const run = await this.apiCall(`/threads/${validThreadId}/runs`, 'POST', runBody);
-    const completed = await this.waitForRunCompletion(validThreadId, run.id);
-    const msgs = await this.getThreadMessages(validThreadId, 1);
-    const last = msgs.find(m => m.role === 'assistant');
-    if (!last) throw new Error('No assistant response found');
-    return { content: last.content, threadId: validThreadId, runId: completed.id };
+    
+    try {
+      this.validateThreadId(validThreadId);
+      await this.addMessageToThread(validThreadId, userMessage, 'user');
+      
+      const runBody: any = { 
+        assistant_id: CHAT_ASSISTANT_ID, 
+        temperature: 0.7 
+      };
+      
+      // Combine personalization and session context with proper length limits
+      const instructions: string[] = [];
+      if (personalizationContext && personalizationContext.trim()) {
+        // Limit personalization context to reasonable length
+        const truncatedPersonalization = personalizationContext.length > 2000 
+          ? personalizationContext.substring(0, 2000) + '...'
+          : personalizationContext;
+        instructions.push(truncatedPersonalization);
+      }
+      
+      if (sessionContext && sessionContext.trim()) {
+        // Limit session context to reasonable length
+        const truncatedSession = sessionContext.length > 1500
+          ? sessionContext.substring(0, 1500) + '...'
+          : sessionContext;
+        instructions.push(truncatedSession);
+      }
+      
+      if (instructions.length > 0) {
+        // Combine and ensure total length is reasonable for API
+        const combinedInstructions = instructions.join(' ');
+        runBody.additional_instructions = combinedInstructions.length > 3000
+          ? combinedInstructions.substring(0, 3000) + '...'
+          : combinedInstructions;
+      }
+      
+      const run = await this.apiCall(`/threads/${validThreadId}/runs`, 'POST', runBody);
+      
+      if (!run || !run.id) {
+        throw new Error('Failed to create run - no run ID returned');
+      }
+      
+      const completed = await this.waitForRunCompletion(validThreadId, run.id);
+      
+      if (!completed || completed.status !== 'completed') {
+        throw new Error(`Run did not complete successfully: ${completed?.status}`);
+      }
+      
+      const msgs = await this.getThreadMessages(validThreadId, 1);
+      const lastAssistantMessage = msgs.find(m => m.role === 'assistant');
+      
+      if (!lastAssistantMessage || !lastAssistantMessage.content) {
+        throw new Error('No assistant response found in thread messages');
+      }
+      
+      return { 
+        content: lastAssistantMessage.content, 
+        threadId: validThreadId, 
+        runId: completed.id 
+      };
+      
+    } catch (error) {
+      console.error('Error in runChatAssistant:', error);
+      
+      // If thread-related error, try creating a new thread and retrying once
+      if (error instanceof Error && (
+        error.message.includes('thread') || 
+        error.message.includes('404') ||
+        error.message.includes('Invalid threadId')
+      )) {
+        console.warn('Thread error detected, creating new thread and retrying...');
+        try {
+          const newThreadId = await this.createThread({ 
+            purpose: 'chat', 
+            recovered: 'true',
+            originalThreadId: validThreadId 
+          });
+          
+          // Add the user message to the new thread
+          await this.addMessageToThread(newThreadId, userMessage, 'user');
+          
+          const runBody: any = { 
+            assistant_id: CHAT_ASSISTANT_ID, 
+            temperature: 0.7 
+          };
+          
+          // Re-apply contexts for retry
+          const instructions: string[] = [];
+          if (personalizationContext?.trim()) {
+            instructions.push(personalizationContext.length > 2000 
+              ? personalizationContext.substring(0, 2000) + '...'
+              : personalizationContext);
+          }
+          if (sessionContext?.trim()) {
+            instructions.push(sessionContext.length > 1500
+              ? sessionContext.substring(0, 1500) + '...'
+              : sessionContext);
+          }
+          
+          if (instructions.length > 0) {
+            const combinedInstructions = instructions.join(' ');
+            runBody.additional_instructions = combinedInstructions.length > 3000
+              ? combinedInstructions.substring(0, 3000) + '...'
+              : combinedInstructions;
+          }
+          
+          const retryRun = await this.apiCall(`/threads/${newThreadId}/runs`, 'POST', runBody);
+          const retryCompleted = await this.waitForRunCompletion(newThreadId, retryRun.id);
+          const retryMsgs = await this.getThreadMessages(newThreadId, 1);
+          const retryLastMessage = retryMsgs.find(m => m.role === 'assistant');
+          
+          if (retryLastMessage?.content) {
+            console.log('Successfully recovered with new thread:', newThreadId);
+            return { 
+              content: retryLastMessage.content, 
+              threadId: newThreadId, 
+              runId: retryCompleted.id 
+            };
+          }
+          
+          throw new Error('Retry with new thread also failed');
+          
+        } catch (retryError) {
+          console.error('Retry with new thread failed:', retryError);
+          // Fall through to generic error response
+        }
+      }
+      
+      // Return a graceful error response instead of throwing
+      const errorThreadId = validThreadId || await this.createThread({ purpose: 'chat', error: 'true' });
+      return {
+        content: "I apologize, but I'm having some technical difficulties right now. Could you please try asking your question again? I'm here to help! 🤖",
+        threadId: errorThreadId,
+        runId: `error-${Date.now()}`
+      };
+    }
   }
 
   async runAnalyticsAssistant(conversationHistory: ThreadMessage[], personalization?: any): Promise<AnalyticsResult> {
     const analyticsThreadId = await this.createThread({ purpose: 'analytics' });
     const conversationText = conversationHistory.map(m => `[${m.role}] ${m.content}`).join('\n');
     const prompt = `
-Analyze this conversation and provide a JSON object with:
-- summary (2-3 sentences)
-- permaInsights: { positiveEmotion, engagement, relationships, meaning, accomplishment }
-- personalizationUpdates: 
-    - Update chatPersona.preferredTopics: Add new topics if user shows interest, re-rank or demote topics that are ignored, and remove topics if user avoids them.
-    - Update chatPersona.emotionalSupport: Adjust if user sentiment or engagement changes.
-    - Update chatPersona.communicationStyle: If user shows a preference for a certain style, adapt to that.
-    - Update contentPreferences.primaryInterests: Add new interests/topics based on chat engagement, re-rank or remove topics not engaged with.
-    - Update contentPreferences.avoidTopics: Add topics/content types to avoid if user shows dislike or avoidance.
-- suggestedQuestions: two concise questions
-- shouldSummarize: boolean
+Analyze this conversation and provide a JSON object with the following structure. IMPORTANT: All values must be properly quoted strings or numbers for valid JSON:
+
+{
+  "summary": "2-3 sentence summary text",
+  "permaInsights": {
+    "positiveEmotion": 5,
+    "engagement": 6,
+    "relationships": 4,
+    "meaning": 5,
+    "accomplishment": 3
+  },
+  "personalizationUpdates": {
+    "chatPersona": {
+      "preferredTopics": ["topic1", "topic2"],
+      "emotionalSupport": "medium",
+      "communicationStyle": "supportive"
+    },
+    "contentPreferences": {
+      "primaryInterests": ["interest1", "interest2"],
+      "avoidTopics": ["avoid1", "avoid2"]
+    }
+  },
+  "suggestedQuestions": ["question1", "question2"],
+  "shouldSummarize": false,
+  "keyTopics": ["topic1", "topic2"],
+  "emotionalState": "neutral",
+  "userNeeds": ["need1", "need2"],
+  "importantContext": "key information text"
+}
+
+Rules for JSON formatting:
+- All strings must be in double quotes
+- Numbers should be integers 1-10 for PERMA insights
+- Boolean values should be true/false (not quoted)
+- No trailing commas
+- No unquoted values like 'moderate' or 'developing'
 
 Personalization context: ${JSON.stringify(personalization || {})}
 Conversation:
 ${conversationText}
-`.trim();
+
+Return only valid JSON:`.trim();
 
     try {
       await this.addMessageToThread(analyticsThreadId, prompt, 'user');
       const run = await this.apiCall(`/threads/${analyticsThreadId}/runs`, 'POST', {
-        assistant_id: ANALYTICS_ASSISTANT_ID,
+        assistant_id: ANALYTICS_ASSISTANT_ID, // ✅ Correct - using analytics assistant
         temperature: 0.3
       });
       await this.waitForRunCompletion(analyticsThreadId, run.id);
@@ -153,27 +318,72 @@ ${conversationText}
       await this.apiCall(`/threads/${analyticsThreadId}`, 'DELETE');
       const result = msgs.find(m => m.role === 'assistant');
       if (!result) throw new Error('No analytics response found');
+      
       try {
+        // Clean the response by removing any markdown formatting
+        let cleanContent = result.content.trim();
+        
+        // Remove markdown code block formatting if present
+        cleanContent = cleanContent.replace(/^```json\s*\n?/, '').replace(/\n?```$/, '');
+        cleanContent = cleanContent.replace(/^```\s*\n?/, '').replace(/\n?```$/, '');
+        
         // Try direct JSON parse first
-        return JSON.parse(result.content);
+        const parsed = JSON.parse(cleanContent);
+        
+        // Validate and sanitize the parsed object
+        return {
+          summary: typeof parsed.summary === 'string' ? parsed.summary : 'Analysis completed',
+          permaInsights: this.validatePermaInsights(parsed.permaInsights),
+          personalizationUpdates: parsed.personalizationUpdates || {},
+          suggestedQuestions: Array.isArray(parsed.suggestedQuestions) ? parsed.suggestedQuestions : [],
+          shouldSummarize: typeof parsed.shouldSummarize === 'boolean' ? parsed.shouldSummarize : false,
+          keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics : [],
+          emotionalState: typeof parsed.emotionalState === 'string' ? parsed.emotionalState : 'neutral',
+          userNeeds: Array.isArray(parsed.userNeeds) ? parsed.userNeeds : [],
+          importantContext: typeof parsed.importantContext === 'string' ? parsed.importantContext : ''
+        };
       } catch (err) {
+        console.error('JSON parse error:', err);
+        console.error('Raw content:', result.content);
+        
         // Try to extract JSON substring and parse again
         try {
-          const match = result.content.match(/\{[\s\S]*\}/);
-          if (match) {
-            return JSON.parse(match[0]);
+          const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            let jsonStr = jsonMatch[0];
+            
+            // Attempt to fix common JSON issues
+            jsonStr = this.fixCommonJsonIssues(jsonStr);
+            
+            const parsed = JSON.parse(jsonStr);
+            return {
+              summary: typeof parsed.summary === 'string' ? parsed.summary : 'Analysis completed',
+              permaInsights: this.validatePermaInsights(parsed.permaInsights),
+              personalizationUpdates: parsed.personalizationUpdates || {},
+              suggestedQuestions: Array.isArray(parsed.suggestedQuestions) ? parsed.suggestedQuestions : [],
+              shouldSummarize: typeof parsed.shouldSummarize === 'boolean' ? parsed.shouldSummarize : false,
+              keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics : [],
+              emotionalState: typeof parsed.emotionalState === 'string' ? parsed.emotionalState : 'neutral',
+              userNeeds: Array.isArray(parsed.userNeeds) ? parsed.userNeeds : [],
+              importantContext: typeof parsed.importantContext === 'string' ? parsed.importantContext : ''
+            };
           }
         } catch (err2) {
-          // Ignore, will fall through to error below
+          console.error('Fallback JSON parse also failed:', err2);
         }
-        // Log and return fallback
+        
+        // Final fallback
         console.error('Failed to parse analytics assistant JSON:', result.content);
         return {
-          summary: 'Analysis failed',
+          summary: 'Analysis failed - JSON parse error',
           permaInsights: {},
           personalizationUpdates: {},
           suggestedQuestions: [],
-          shouldSummarize: false
+          shouldSummarize: false,
+          keyTopics: [],
+          emotionalState: 'neutral',
+          userNeeds: [],
+          importantContext: ''
         };
       }
     } catch (err) {
@@ -183,9 +393,78 @@ ${conversationText}
         permaInsights: {},
         personalizationUpdates: {},
         suggestedQuestions: [],
-        shouldSummarize: false
+        shouldSummarize: false,
+        keyTopics: [],
+        emotionalState: 'neutral',
+        userNeeds: [],
+        importantContext: ''
       };
     }
+  }
+
+  /**
+   * Fix common JSON formatting issues in AI responses
+   */
+  private fixCommonJsonIssues(jsonStr: string): string {
+    // Fix unquoted boolean-like values
+    jsonStr = jsonStr.replace(/:\s*true(?=\s*[,}])/g, ': "true"');
+    jsonStr = jsonStr.replace(/:\s*false(?=\s*[,}])/g, ': "false"');
+    
+    // Fix unquoted common values
+    jsonStr = jsonStr.replace(/:\s*moderate(?=\s*[,}])/g, ': "moderate"');
+    jsonStr = jsonStr.replace(/:\s*developing(?=\s*[,}])/g, ': "developing"');
+    jsonStr = jsonStr.replace(/:\s*neutral(?=\s*[,}])/g, ': "neutral"');
+    jsonStr = jsonStr.replace(/:\s*low(?=\s*[,}])/g, ': "low"');
+    jsonStr = jsonStr.replace(/:\s*high(?=\s*[,}])/g, ': "high"');
+    jsonStr = jsonStr.replace(/:\s*medium(?=\s*[,}])/g, ': "medium"');
+    
+    // Fix trailing commas
+    jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
+    
+    return jsonStr;
+  }
+
+  /**
+   * Validate and convert PERMA insights to proper format
+   */
+  private validatePermaInsights(permaInsights: any): any {
+    if (!permaInsights || typeof permaInsights !== 'object') {
+      return {};
+    }
+
+    const validated: any = {};
+    const permaKeys = ['positiveEmotion', 'engagement', 'relationships', 'meaning', 'accomplishment'];
+    
+    permaKeys.forEach(key => {
+      let value = permaInsights[key];
+      
+      // Convert string numbers to actual numbers
+      if (typeof value === 'string') {
+        const numValue = parseInt(value, 10);
+        if (!isNaN(numValue)) {
+          value = numValue;
+        } else {
+          // Convert descriptive values to numbers
+          switch (value.toLowerCase()) {
+            case 'low': value = 3; break;
+            case 'moderate': value = 5; break;
+            case 'high': value = 7; break;
+            case 'neutral': value = 5; break;
+            case 'developing': value = 4; break;
+            default: value = 5;
+          }
+        }
+      }
+      
+      // Ensure it's a valid number between 1-10
+      if (typeof value === 'number' && value >= 1 && value <= 10) {
+        validated[key] = Math.round(value);
+      } else {
+        validated[key] = 5; // Default value
+      }
+    });
+
+    return validated;
   }
 
   async summarizeAndTrimThread(threadId: string, keepLastN = 10): Promise<string> {
@@ -240,5 +519,32 @@ ${conversationText}
       "Your goals: (1) Use the user's MBTI and communication preferences to shape your tone, language, and approach. (2) Intentionally target the user's PERMA focus areas and happiness drivers to improve their well-being. (3) Keep the user engaged and positive—ask questions, offer encouragement, and suggest relevant topics or services. (4) Adapt your response length: be concise for short questions, and provide more detail for open-ended or emotional topics. (5) Avoid topics and patterns the user dislikes."
     );
     return ctx.length ? `Personalization context: ${ctx.join(' ')}.` : '';
+  }
+
+  async generateQuickResponse(prompt: string): Promise<string> {
+    try {
+      const response = await this.apiCall('/chat/completions', 'POST', {
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 50,
+        temperature: 0.3
+      });
+      
+      return response.choices?.[0]?.message?.content?.trim() || '';
+    } catch (error) {
+      console.error('Error generating quick response:', error);
+      throw error;
+    }
+  }
+
+  async deleteThread(threadId: string): Promise<void> {
+    try {
+      this.validateThreadId(threadId);
+      await this.apiCall(`/threads/${threadId}`, 'DELETE');
+      console.log(`Thread ${threadId} deleted successfully`);
+    } catch (error) {
+      console.error(`Error deleting thread ${threadId}:`, error);
+      throw error;
+    }
   }
 }

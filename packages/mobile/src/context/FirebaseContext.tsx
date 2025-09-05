@@ -224,16 +224,28 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     return await queryDocuments('assessments', 'userId', '==', userId);
   };
 
-  // Chat operations
+  // Enhanced chat session operations
   const saveChatSession = async (userId: string, sessionData: any): Promise<FirebaseResponse> => {
     try {
       const cleanData = removeUndefinedFields(sessionData);
-      const sessionRef = await addDoc(collection(db, 'chatSessions'), {
+      
+      // Remove any empty id field to avoid conflicts
+      const { id, ...dataWithoutId } = cleanData;
+      
+      // Ensure required fields are present
+      const sessionDoc = {
         userId,
-        ...cleanData,
+        ...dataWithoutId,
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+        updatedAt: serverTimestamp(),
+        archived: cleanData.archived || false,
+        messageCount: cleanData.messageCount || 0
+      };
+      
+      console.log('Saving chat session to Firebase:', sessionDoc);
+      const sessionRef = await addDoc(collection(db, 'chatSessions'), sessionDoc);
+      
+      console.log(`Chat session created with ID: ${sessionRef.id}`);
       return { success: true, data: { id: sessionRef.id } };
     } catch (error) {
       console.error('Error saving chat session:', error);
@@ -241,22 +253,69 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const getChatSessions = async (userId: string): Promise<FirebaseResponse> => {
-    return await queryDocuments('chatSessions', 'userId', '==', userId);
+  const updateChatSession = async (sessionId: string, updates: any): Promise<FirebaseResponse> => {
+    try {
+      if (!sessionId) {
+        throw new Error('Session ID is required for update');
+      }
+      
+      const cleanUpdates = removeUndefinedFields(updates);
+      const sessionRef = doc(db, 'chatSessions', sessionId);
+      
+      // Always include updatedAt timestamp
+      const updateData = {
+        ...cleanUpdates,
+        updatedAt: serverTimestamp()
+      };
+      
+      await updateDoc(sessionRef, updateData);
+      
+      console.log(`Chat session ${sessionId} updated successfully`);
+      return { success: true, data: { id: sessionId } };
+    } catch (error) {
+      console.error(`Error updating chat session ${sessionId}:`, error);
+      return { success: false, error: 'Failed to update chat session' };
+    }
   };
 
-  const updateChatSession = async (sessionId: string, updates: any): Promise<FirebaseResponse> => {
-    return await updateDocument('chatSessions', sessionId, updates);
+  const getChatSessions = async (userId: string): Promise<FirebaseResponse> => {
+    try {
+      const q = query(
+        collection(db, 'chatSessions'), 
+        where('userId', '==', userId)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      const sessions = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Ensure timestamps are properly formatted
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || doc.data().createdAt,
+        updatedAt: doc.data().updatedAt?.toDate?.()?.toISOString() || doc.data().updatedAt
+      }));
+      
+      return { success: true, data: sessions };
+    } catch (error) {
+      console.error('Error fetching chat sessions:', error);
+      return { success: false, error: 'Failed to fetch chat sessions' };
+    }
   };
 
   const saveChatMessage = async (sessionId: string, message: any): Promise<FirebaseResponse> => {
     try {
+      if (!sessionId) {
+        throw new Error('Session ID is required to save message');
+      }
+      
       const cleanMessage = removeUndefinedFields(message);
-      const messageRef = await addDoc(collection(db, 'chatMessages'), {
+      const messageDoc = {
         sessionId,
         ...cleanMessage,
         createdAt: serverTimestamp()
-      });
+      };
+      
+      const messageRef = await addDoc(collection(db, 'chatMessages'), messageDoc);
+      
       return { success: true, data: { id: messageRef.id } };
     } catch (error) {
       console.error('Error saving chat message:', error);

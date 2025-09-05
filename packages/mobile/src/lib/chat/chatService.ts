@@ -1,7 +1,6 @@
 import { AssistantsService } from './assistantsService';
+import { SessionManager, SessionContext } from './sessionManager';
 import Sentiment from 'sentiment';
-// Add import for FirebaseContext
-import { useFirebase } from '../../context/FirebaseContext';
 
 export interface ChatMessage {
   id: string;
@@ -30,28 +29,23 @@ export interface ChatSession {
   threadId: string;
   userId: string;
   title: string;
-  lastSummary?: string;
+  theme?: string;
+  summary?: string;
   messageCount: number;
   lastAnalyticsRun?: string;
   createdAt: string;
   updatedAt: string;
+  archived?: boolean;
 }
 
 export class ChatService {
   private static instance: ChatService;
   private assistantsService: AssistantsService;
-  // Add firebase methods as properties
-  private updateChatSession?: (sessionId: string, updates: any) => Promise<any>;
+  private sessionManager: SessionManager;
 
   private constructor() {
     this.assistantsService = AssistantsService.getInstance();
-    // Try to get firebase methods if in React context
-    try {
-      const firebase = useFirebase();
-      this.updateChatSession = firebase.updateChatSession;
-    } catch {
-      // Not in React context, ignore
-    }
+    this.sessionManager = SessionManager.getInstance();
   }
 
   static getInstance(): ChatService {
@@ -59,38 +53,152 @@ export class ChatService {
     return ChatService.instance;
   }
 
-  async createChatSession(userId: string, _userContext?: UserContext): Promise<ChatSession> {
-    // Each user gets a unique thread for concurrency/isolation
-    const threadId = await this.assistantsService.createThread({ userId, purpose: 'chat', created: new Date().toISOString() });
-    return {
-      id: '', // set by Firebase
-      threadId,
-      userId,
-      title: 'New Chat',
-      messageCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+  async createChatSession(
+    userId: string, 
+    userContext?: UserContext,
+    getRecentSessions?: (userId: string, limit: number) => Promise<any[]>,
+    personalization?: any
+  ): Promise<{ session: ChatSession; sessionContext?: SessionContext }> {
+    try {
+      // Build context from previous sessions if available
+      let sessionContext: SessionContext | undefined;
+      if (getRecentSessions) {
+        sessionContext = await this.sessionManager.buildSessionContext(
+          userId, 
+          getRecentSessions, 
+          personalization
+        );
+      }
+
+      // Create thread metadata with session context info
+      const threadMetadata = {
+        userId,
+        purpose: 'chat',
+        created: new Date().toISOString(),
+        hasContext: sessionContext?.continuityContext ? 'true' : 'false',
+        hasPreviousSessions: (sessionContext?.previousSessions?.length && sessionContext.previousSessions.length > 0) ? 'true' : 'false'
+      };
+
+      const threadId = await this.assistantsService.createThread(threadMetadata);
+      
+      // If we have previous session context, add it as the first message to the thread
+      if (sessionContext && sessionContext.previousSessions?.length && sessionContext.previousSessions.length > 0) {
+        const contextMessage = this.buildContextMessage(sessionContext);
+        if (contextMessage) {
+          await this.assistantsService.addMessageToThread(threadId, contextMessage, 'assistant');
+        }
+      }
+      
+      const session: ChatSession = {
+        id: '', // Will be set by Firebase
+        threadId,
+        userId,
+        title: 'New Chat',
+        messageCount: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      return { session, sessionContext };
+    } catch (error) {
+      console.error('Error creating chat session:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Build context message from previous sessions for thread initialization
+   */
+  private buildContextMessage(sessionContext: SessionContext): string | null {
+    if (!sessionContext.previousSessions?.length || sessionContext.previousSessions.length === 0) {
+      return null;
+    }
+    
+    const recentSession = sessionContext.previousSessions[0];
+    const contextParts: string[] = [];
+    
+    // Add main context
+    if (recentSession.summary) {
+      contextParts.push(`Previous conversation: ${recentSession.summary}`);
+    }
+    
+    // Add key topics if available
+    if (recentSession.keyTopics?.length && recentSession.keyTopics.length > 0) {
+      contextParts.push(`Topics we discussed: ${recentSession.keyTopics.join(', ')}`);
+    }
+    
+    // Add important context
+    if (recentSession.importantContext) {
+      contextParts.push(`Important context: ${recentSession.importantContext}`);
+    }
+    
+    // Add emotional state continuity
+    if (recentSession.emotionalState && recentSession.emotionalState !== 'neutral') {
+      contextParts.push(`User's emotional state was: ${recentSession.emotionalState}`);
+    }
+    
+    // Add user needs
+    if (recentSession.userNeeds?.length && recentSession.userNeeds.length > 0) {
+      contextParts.push(`User needs: ${recentSession.userNeeds.join(', ')}`);
+    }
+    
+    if (contextParts.length === 0) return null;
+    
+    return `[CONTEXT FROM PREVIOUS SESSION] ${contextParts.join('. ')}. Please use this context to provide continuity in our conversation, but don't explicitly mention this is from a previous session unless relevant.`;
   }
 
   async generateResponse(
     message: string,
     session: ChatSession,
-    _userContext?: UserContext,
-    personalization?: any
+    userContext?: UserContext,
+    personalization?: any,
+    sessionContext?: SessionContext,
+    updateSessionCallback?: (sessionId: string, updates: any) => Promise<any>
   ): Promise<{ response: string; sentiment?: string; threadId: string; runId: string }> {
     try {
-      // Use concise context and thread for cost/concurrency
-      const ctx = this.assistantsService.formatPersonalizationContext(personalization);
-      const out = await this.assistantsService.runChatAssistant(session.threadId, message, ctx);
+      // Format personalization context
+      const personalizationCtx = this.assistantsService.formatPersonalizationContext(personalization);
+      
+      // Format session context with previous session summaries
+      let sessionCtx = '';
+      if (sessionContext) {
+        sessionCtx = this.sessionManager.formatContextForAssistant(sessionContext);
+      }
+      
+      // Add previous session summary context if available
+      if (sessionContext?.previousSessions?.length && sessionContext.previousSessions.length > 0) {
+        const recentSummary = sessionContext.previousSessions[0];
+        if (recentSummary.summary) {
+          let summaryContext = `Previous conversation context: ${recentSummary.summary}. `;
+          if (recentSummary.keyTopics?.length > 0) {
+            summaryContext += `Recent topics discussed: ${recentSummary.keyTopics.join(', ')}. `;
+          }
+          if (recentSummary.importantContext) {
+            summaryContext += `Important context to remember: ${recentSummary.importantContext}. `;
+          }
+          sessionCtx = summaryContext + sessionCtx;
+        }
+      }
 
-      // If a new threadId is returned, update the session in Firebase (and in-memory)
-      if (out.threadId && out.threadId !== session.threadId && this.updateChatSession) {
+      // FIX: Pass session.threadId (string) instead of entire session object
+      const out = await this.assistantsService.runChatAssistant(
+        session.threadId,  // ✅ FIXED: Pass threadId string, not session object
+        message, 
+        personalizationCtx,
+        sessionCtx
+      );
+
+      // Handle threadId changes - update session if thread was recovered
+      if (out.threadId && out.threadId !== session.threadId && updateSessionCallback) {
         try {
-          await this.updateChatSession(session.id, { threadId: out.threadId });
+          console.log(`Thread ID changed from ${session.threadId} to ${out.threadId}, updating session`);
+          await updateSessionCallback(session.id, { 
+            threadId: out.threadId,
+            updatedAt: new Date().toISOString()
+          });
+          // Update the session object passed in (mutation for immediate use)
           session.threadId = out.threadId;
         } catch (e) {
-          // Log but do not block
           console.warn('Failed to update threadId in Firebase:', e);
         }
       }
@@ -110,6 +218,38 @@ export class ChatService {
         runId: ''
       };
     }
+  }
+
+  async closeSession(
+    session: ChatSession,
+    updateSessionCallback: (sessionId: string, updates: any) => Promise<any>
+  ): Promise<void> {
+    try {
+      console.log(`Closing session ${session.id} with ${session.messageCount} messages`);
+      
+      await this.sessionManager.summarizeAndCloseSession(
+        session.id,
+        session.threadId,
+        session.messageCount || 0,
+        updateSessionCallback
+      );
+      
+      console.log(`Session ${session.id} closed and summarized successfully`);
+    } catch (error) {
+      console.error('Error closing session:', error);
+      // Still mark as archived even if summarization fails
+      await updateSessionCallback(session.id, {
+        archived: true,
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  shouldCloseSession(session: ChatSession): boolean {
+    return this.sessionManager.shouldCloseSession(
+      session.messageCount || 0,
+      session.updatedAt
+    );
   }
 
   async analyzeConversation(
@@ -200,5 +340,81 @@ export class ChatService {
     if (result.score > 1) return 'positive';
     if (result.score < -1) return 'negative';
     return 'neutral';
+  }
+
+  async generateSessionTitle(conversationStart: string): Promise<string> {
+    try {
+      const prompt = `Generate a concise, descriptive title (3-5 words) for a chat conversation that starts with: "${conversationStart.slice(0, 200)}..."
+
+Rules:
+- Focus on the main topic or theme
+- Keep it under 25 characters
+- Make it specific and helpful
+- Don't use quotes
+- Examples: "Career Advice", "Anxiety Support", "Learning Python", "Relationship Help"
+
+Title:`;
+
+      const response = await this.assistantsService.generateQuickResponse(prompt);
+      const title = response.trim().replace(/['"]/g, '');
+      
+      // Validate title length and content
+      if (title.length > 30 || title.length < 3) {
+        return this.generateFallbackTitle(conversationStart);
+      }
+      
+      return title;
+    } catch (error) {
+      console.error('Error generating session title:', error);
+      return this.generateFallbackTitle(conversationStart);
+    }
+  }
+
+  private generateFallbackTitle(text: string): string {
+    const words = text.toLowerCase().split(' ').filter(w => w.length > 3);
+    const keywords = ['help', 'advice', 'learn', 'support', 'question', 'problem', 'goal', 'plan'];
+    
+    for (const keyword of keywords) {
+      if (words.includes(keyword)) {
+        return `${keyword.charAt(0).toUpperCase() + keyword.slice(1)} Chat`;
+      }
+    }
+    
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Morning Chat';
+    if (hour < 17) return 'Afternoon Chat';
+    return 'Evening Chat';
+  }
+
+  async categorizeSession(messages: ChatMessage[]): Promise<{ theme: string; summary: string }> {
+    if (messages.length < 3) {
+      return { theme: 'General', summary: 'New conversation' };
+    }
+
+    try {
+      const conversationText = messages.slice(0, 10).map(m => `[${m.role}] ${m.content}`).join('\n');
+      const prompt = `Analyze this conversation and provide a JSON response with:
+- theme: one of ["Wellness", "Learning", "Support", "Career", "Relationships", "General"]
+- summary: brief 1-sentence summary
+
+Conversation:
+${conversationText}
+
+JSON:`;
+
+      const response = await this.assistantsService.generateQuickResponse(prompt);
+      try {
+        const parsed = JSON.parse(response);
+        return {
+          theme: parsed.theme || 'General',
+          summary: parsed.summary || 'Chat conversation'
+        };
+      } catch {
+        return { theme: 'General', summary: 'Chat conversation' };
+      }
+    } catch (error) {
+      console.error('Error categorizing session:', error);
+      return { theme: 'General', summary: 'Chat conversation' };
+    }
   }
 }
