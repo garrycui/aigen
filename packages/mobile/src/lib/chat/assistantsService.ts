@@ -132,29 +132,50 @@ export class AssistantsService {
         temperature: 0.7 
       };
       
+      // Enhanced instructions for better formatting
+      const formattingInstructions = `
+FORMATTING REQUIREMENTS - FOLLOW EXACTLY:
+- Use markdown formatting for structure and readability
+- Use **bold** for emphasis and key points
+- Use proper headers: # for main topics, ## for sections, ### for subsections
+- Use numbered lists (1. 2. 3.) for sequential steps or ordered content
+- Use bullet points (-) for unordered lists and examples
+- Use > for quotes or important notes
+- Use --- for section dividers when needed
+- Keep paragraphs concise with proper line breaks
+- Always use proper sequential numbering (1. 2. 3. 4.) not repeated (1. 1. 1. 1.)
+- End with a question or engagement prompt when appropriate
+
+RESPONSE STRUCTURE:
+- Start with a clear header if the topic is substantial
+- Break content into digestible sections
+- Use visual hierarchy with headers and lists
+- Provide clear, actionable guidance
+- Maintain encouraging and supportive tone
+- Use straight dividers (---) for major section breaks
+`;
+      
       // Combine personalization and session context with proper length limits
-      const instructions: string[] = [];
+      const instructions: string[] = [formattingInstructions];
+      
       if (personalizationContext && personalizationContext.trim()) {
-        // Limit personalization context to reasonable length
-        const truncatedPersonalization = personalizationContext.length > 2000 
-          ? personalizationContext.substring(0, 2000) + '...'
+        const truncatedPersonalization = personalizationContext.length > 1800 
+          ? personalizationContext.substring(0, 1800) + '...'
           : personalizationContext;
         instructions.push(truncatedPersonalization);
       }
       
       if (sessionContext && sessionContext.trim()) {
-        // Limit session context to reasonable length
-        const truncatedSession = sessionContext.length > 1500
-          ? sessionContext.substring(0, 1500) + '...'
+        const truncatedSession = sessionContext.length > 1200
+          ? sessionContext.substring(0, 1200) + '...'
           : sessionContext;
         instructions.push(truncatedSession);
       }
       
-      if (instructions.length > 0) {
-        // Combine and ensure total length is reasonable for API
-        const combinedInstructions = instructions.join(' ');
-        runBody.additional_instructions = combinedInstructions.length > 3000
-          ? combinedInstructions.substring(0, 3000) + '...'
+      if (instructions.length > 1) {
+        const combinedInstructions = instructions.join('\n\n');
+        runBody.additional_instructions = combinedInstructions.length > 3500
+          ? combinedInstructions.substring(0, 3500) + '...'
           : combinedInstructions;
       }
       
@@ -177,8 +198,11 @@ export class AssistantsService {
         throw new Error('No assistant response found in thread messages');
       }
       
+      // Post-process the response for better formatting
+      const formattedContent = this.enhanceResponseFormatting(lastAssistantMessage.content);
+      
       return { 
-        content: lastAssistantMessage.content, 
+        content: formattedContent, 
         threadId: validThreadId, 
         runId: completed.id 
       };
@@ -200,7 +224,6 @@ export class AssistantsService {
             originalThreadId: validThreadId 
           });
           
-          // Add the user message to the new thread
           await this.addMessageToThread(newThreadId, userMessage, 'user');
           
           const runBody: any = { 
@@ -208,23 +231,28 @@ export class AssistantsService {
             temperature: 0.7 
           };
           
-          // Re-apply contexts for retry
-          const instructions: string[] = [];
+          // Re-apply contexts and formatting instructions for retry
+          const formattingInstructions = `
+FORMATTING: Use markdown (headers, bold, lists, quotes) for clear structure and readability.
+STYLE: Be conversational, structured, encouraging. Include engagement prompts.
+`;
+          const instructions: string[] = [formattingInstructions];
+          
           if (personalizationContext?.trim()) {
-            instructions.push(personalizationContext.length > 2000 
-              ? personalizationContext.substring(0, 2000) + '...'
+            instructions.push(personalizationContext.length > 1800 
+              ? personalizationContext.substring(0, 1800) + '...'
               : personalizationContext);
           }
           if (sessionContext?.trim()) {
-            instructions.push(sessionContext.length > 1500
-              ? sessionContext.substring(0, 1500) + '...'
+            instructions.push(sessionContext.length > 1200
+              ? sessionContext.substring(0, 1200) + '...'
               : sessionContext);
           }
           
-          if (instructions.length > 0) {
-            const combinedInstructions = instructions.join(' ');
-            runBody.additional_instructions = combinedInstructions.length > 3000
-              ? combinedInstructions.substring(0, 3000) + '...'
+          if (instructions.length > 1) {
+            const combinedInstructions = instructions.join('\n\n');
+            runBody.additional_instructions = combinedInstructions.length > 3500
+              ? combinedInstructions.substring(0, 3500) + '...'
               : combinedInstructions;
           }
           
@@ -235,8 +263,9 @@ export class AssistantsService {
           
           if (retryLastMessage?.content) {
             console.log('Successfully recovered with new thread:', newThreadId);
+            const formattedRetryContent = this.enhanceResponseFormatting(retryLastMessage.content);
             return { 
-              content: retryLastMessage.content, 
+              content: formattedRetryContent, 
               threadId: newThreadId, 
               runId: retryCompleted.id 
             };
@@ -246,7 +275,6 @@ export class AssistantsService {
           
         } catch (retryError) {
           console.error('Retry with new thread failed:', retryError);
-          // Fall through to generic error response
         }
       }
       
@@ -260,14 +288,47 @@ export class AssistantsService {
     }
   }
 
+  /**
+   * Enhance response formatting for better ChatMessage display
+   */
+  private enhanceResponseFormatting(content: string): string {
+    let formatted = content;
+    
+    // Ensure proper spacing around headers
+    formatted = formatted.replace(/^(#{1,4})\s*(.+)$/gm, '\n$1 $2\n');
+    
+    // Ensure proper numbered list formatting with preserved numbers
+    formatted = formatted.replace(/^(\d+)\.\s+(.+)$/gm, '$1. $2');
+    
+    // Ensure proper bullet list formatting
+    formatted = formatted.replace(/^(-|\*)\s+(.+)$/gm, '- $2');
+    
+    // Ensure proper spacing around quotes
+    formatted = formatted.replace(/^>\s*(.+)$/gm, '> $1');
+    
+    // Ensure proper divider formatting
+    formatted = formatted.replace(/^(---+|\*\*\*+)$/gm, '---');
+    
+    // Clean up multiple consecutive newlines
+    formatted = formatted.replace(/\n{3,}/g, '\n\n');
+    
+    // Trim whitespace
+    formatted = formatted.trim();
+    
+    return formatted;
+  }
+
   async runAnalyticsAssistant(conversationHistory: ThreadMessage[], personalization?: any): Promise<AnalyticsResult> {
     const analyticsThreadId = await this.createThread({ purpose: 'analytics' });
     const conversationText = conversationHistory.map(m => `[${m.role}] ${m.content}`).join('\n');
+    
     const prompt = `
-Analyze this conversation and provide a JSON object with the following structure. IMPORTANT: All values must be properly quoted strings or numbers for valid JSON:
+Analyze this happiness-focused conversation and provide a JSON object with the following structure. 
+
+IMPORTANT: All values must be properly quoted strings or numbers for valid JSON:
 
 {
-  "summary": "2-3 sentence summary text",
+  "summary": "2-3 sentence summary focusing on happiness themes and user progress",
   "permaInsights": {
     "positiveEmotion": 5,
     "engagement": 6,
@@ -276,30 +337,38 @@ Analyze this conversation and provide a JSON object with the following structure
     "accomplishment": 3
   },
   "personalizationUpdates": {
-    "chatPersona": {
-      "preferredTopics": ["topic1", "topic2"],
+    "contentPreferences": {
+      "emergingInterests": ["topic1", "topic2"],
+      "topicScores": {"happiness": 8, "wellbeing": 7}
+    },
+    "userCore": {
       "emotionalSupport": "medium",
       "communicationStyle": "supportive"
-    },
-    "contentPreferences": {
-      "primaryInterests": ["interest1", "interest2"],
-      "avoidTopics": ["avoid1", "avoid2"]
     }
   },
-  "suggestedQuestions": ["question1", "question2"],
+  "suggestedQuestions": [
+    "What activities bring you the most joy?",
+    "How can we build on your strengths?"
+  ],
   "shouldSummarize": false,
-  "keyTopics": ["topic1", "topic2"],
-  "emotionalState": "neutral",
-  "userNeeds": ["need1", "need2"],
-  "importantContext": "key information text"
+  "keyTopics": ["happiness", "personal growth"],
+  "emotionalState": "optimistic",
+  "userNeeds": ["encouragement", "goal setting"],
+  "importantContext": "User is actively working on improving wellbeing"
 }
+
+ANALYSIS FOCUS:
+- Identify PERMA improvements and growth opportunities
+- Suggest happiness-focused questions that encourage exploration
+- Note emerging interests that align with user's joy sources
+- Assess emotional progression and support needs
+- Focus on strengths and positive development
 
 Rules for JSON formatting:
 - All strings must be in double quotes
 - Numbers should be integers 1-10 for PERMA insights
 - Boolean values should be true/false (not quoted)
-- No trailing commas
-- No unquoted values like 'moderate' or 'developing'
+- No trailing commas or unquoted values
 
 Personalization context: ${JSON.stringify(personalization || {})}
 Conversation:
@@ -310,7 +379,7 @@ Return only valid JSON:`.trim();
     try {
       await this.addMessageToThread(analyticsThreadId, prompt, 'user');
       const run = await this.apiCall(`/threads/${analyticsThreadId}/runs`, 'POST', {
-        assistant_id: ANALYTICS_ASSISTANT_ID, // ✅ Correct - using analytics assistant
+        assistant_id: ANALYTICS_ASSISTANT_ID,
         temperature: 0.3
       });
       await this.waitForRunCompletion(analyticsThreadId, run.id);
@@ -320,44 +389,38 @@ Return only valid JSON:`.trim();
       if (!result) throw new Error('No analytics response found');
       
       try {
-        // Clean the response by removing any markdown formatting
         let cleanContent = result.content.trim();
-        
-        // Remove markdown code block formatting if present
         cleanContent = cleanContent.replace(/^```json\s*\n?/, '').replace(/\n?```$/, '');
         cleanContent = cleanContent.replace(/^```\s*\n?/, '').replace(/\n?```$/, '');
         
-        // Try direct JSON parse first
         const parsed = JSON.parse(cleanContent);
         
-        // Validate and sanitize the parsed object
         return {
-          summary: typeof parsed.summary === 'string' ? parsed.summary : 'Analysis completed',
+          summary: typeof parsed.summary === 'string' ? parsed.summary : 'Analysis completed - user showing positive engagement',
           permaInsights: this.validatePermaInsights(parsed.permaInsights),
           personalizationUpdates: parsed.personalizationUpdates || {},
-          suggestedQuestions: Array.isArray(parsed.suggestedQuestions) ? parsed.suggestedQuestions : [],
+          suggestedQuestions: Array.isArray(parsed.suggestedQuestions) ? parsed.suggestedQuestions : [
+            "What's bringing you joy lately?",
+            "How can we build on your recent progress?"
+          ],
           shouldSummarize: typeof parsed.shouldSummarize === 'boolean' ? parsed.shouldSummarize : false,
-          keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics : [],
-          emotionalState: typeof parsed.emotionalState === 'string' ? parsed.emotionalState : 'neutral',
-          userNeeds: Array.isArray(parsed.userNeeds) ? parsed.userNeeds : [],
-          importantContext: typeof parsed.importantContext === 'string' ? parsed.importantContext : ''
+          keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics : ['happiness', 'growth'],
+          emotionalState: typeof parsed.emotionalState === 'string' ? parsed.emotionalState : 'positive',
+          userNeeds: Array.isArray(parsed.userNeeds) ? parsed.userNeeds : ['encouragement'],
+          importantContext: typeof parsed.importantContext === 'string' ? parsed.importantContext : 'User engaging positively'
         };
       } catch (err) {
         console.error('JSON parse error:', err);
         console.error('Raw content:', result.content);
         
-        // Try to extract JSON substring and parse again
         try {
           const jsonMatch = result.content.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             let jsonStr = jsonMatch[0];
-            
-            // Attempt to fix common JSON issues
             jsonStr = this.fixCommonJsonIssues(jsonStr);
-            
             const parsed = JSON.parse(jsonStr);
             return {
-              summary: typeof parsed.summary === 'string' ? parsed.summary : 'Analysis completed',
+              summary: typeof parsed.summary === 'string' ? parsed.summary : 'Conversation analysis completed',
               permaInsights: this.validatePermaInsights(parsed.permaInsights),
               personalizationUpdates: parsed.personalizationUpdates || {},
               suggestedQuestions: Array.isArray(parsed.suggestedQuestions) ? parsed.suggestedQuestions : [],
@@ -372,27 +435,25 @@ Return only valid JSON:`.trim();
           console.error('Fallback JSON parse also failed:', err2);
         }
         
-        // Final fallback
-        console.error('Failed to parse analytics assistant JSON:', result.content);
         return {
           summary: 'Analysis failed - JSON parse error',
           permaInsights: {},
           personalizationUpdates: {},
-          suggestedQuestions: [],
+          suggestedQuestions: ["How can I help you feel happier today?"],
           shouldSummarize: false,
-          keyTopics: [],
+          keyTopics: ['conversation'],
           emotionalState: 'neutral',
-          userNeeds: [],
-          importantContext: ''
+          userNeeds: ['support'],
+          importantContext: 'Technical analysis issue - manual review needed'
         };
       }
     } catch (err) {
       console.error('Analytics assistant error:', err);
       return {
-        summary: 'Analysis failed',
+        summary: 'Analysis failed due to technical error',
         permaInsights: {},
         personalizationUpdates: {},
-        suggestedQuestions: [],
+        suggestedQuestions: ["What would make you happier today?"],
         shouldSummarize: false,
         keyTopics: [],
         emotionalState: 'neutral',
@@ -478,55 +539,114 @@ Return only valid JSON:`.trim();
 
   formatPersonalizationContext(personalization: any): string {
     if (!personalization) return '';
+    
     const ctx: string[] = [];
-    if (personalization.chatPersona?.mbtiType) {
-      ctx.push(`User MBTI: ${personalization.chatPersona.mbtiType}. Adapt your communication style and approach to match this personality type.`);
+    
+    // UPDATED: Use UnifiedPersonalizationProfile structure
+    // User Core Information
+    if (personalization.userCore) {
+      const { mbtiType, communicationStyle, socialPreference, challengeLevel, emotionalSupport, learningStyle } = personalization.userCore;
+      
+      if (mbtiType) {
+        ctx.push(`User MBTI: ${mbtiType}. Adapt your communication style to match this personality type.`);
+      }
+      if (communicationStyle) {
+        ctx.push(`Preferred communication style: ${communicationStyle}.`);
+      }
+      if (socialPreference) {
+        ctx.push(`Social preference: ${socialPreference}. Adjust interaction style accordingly.`);
+      }
+      if (challengeLevel) {
+        ctx.push(`Challenge level preference: ${challengeLevel}. Provide appropriately challenging content.`);
+      }
+      if (emotionalSupport) {
+        ctx.push(`Emotional support needs: ${emotionalSupport}. Adjust empathy and support accordingly.`);
+      }
+      if (learningStyle) {
+        ctx.push(`Learning style: ${learningStyle}. Present information in this format when possible.`);
+      }
     }
-    if (personalization.chatPersona?.communicationStyle) {
-      ctx.push(`Preferred communication style: ${personalization.chatPersona.communicationStyle}.`);
+    
+    // Wellness Profile
+    if (personalization.wellnessProfile) {
+      const { focusAreas, strengths, happinessSources, wellnessGoals } = personalization.wellnessProfile;
+      
+      if (focusAreas?.length) {
+        ctx.push(`PRIORITY: Help improve these PERMA areas: ${focusAreas.join(', ')}. Focus conversations on these areas.`);
+      }
+      if (strengths?.length) {
+        ctx.push(`User's PERMA strengths: ${strengths.join(', ')}. Leverage these in conversations.`);
+      }
+      if (happinessSources?.length) {
+        ctx.push(`What makes user happy: ${happinessSources.join(', ')}. Reference these for positive interactions.`);
+      }
+      if (wellnessGoals?.length) {
+        ctx.push(`Wellness goals: ${wellnessGoals.join(', ')}. Support progress toward these goals.`);
+      }
     }
-    if (personalization.chatPersona?.preferredTopics?.length) {
-      ctx.push(`Preferred topics (with scores): ${personalization.chatPersona.preferredTopics.map((t: any) => `${t.topic} (${t.score})`).join(', ')}.`);
+    
+    // Content Preferences
+    if (personalization.contentPreferences) {
+      const { primaryInterests, emergingInterests, avoidTopics } = personalization.contentPreferences;
+      
+      if (primaryInterests?.length) {
+        ctx.push(`Primary interests: ${primaryInterests.slice(0, 5).join(', ')}. Use these for examples and connections.`);
+      }
+      if (emergingInterests?.length) {
+        ctx.push(`Emerging interests: ${emergingInterests.join(', ')}. These are developing interests to nurture.`);
+      }
+      if (avoidTopics?.length) {
+        ctx.push(`Topics to avoid: ${avoidTopics.join(', ')}.`);
+      }
     }
-    if (personalization.learning?.engagementTriggers?.length) {
-      ctx.push(`Engagement triggers: ${personalization.learning.engagementTriggers.join(', ')}.`);
+    
+    // Activity Tracking Context
+    if (personalization.activityTracking) {
+      const { chatMetrics } = personalization.activityTracking;
+      if (chatMetrics?.preferredTopics?.length) {
+        const topTopics = chatMetrics.preferredTopics.slice(0, 3).map((t: any) => `${t.topic} (${t.score})`);
+        ctx.push(`Most engaged topics: ${topTopics.join(', ')}.`);
+      }
     }
-    if (personalization.learning?.happinessDrivers?.length) {
-      ctx.push(`Happiness drivers: ${personalization.learning.happinessDrivers.join(', ')}.`);
+    
+    // Computed Fields
+    if (personalization.computed) {
+      const { overallHappiness, needsAttention, engagementLevel } = personalization.computed;
+      
+      if (overallHappiness) {
+        ctx.push(`Current happiness level: ${overallHappiness}/10. Adjust tone and approach accordingly.`);
+      }
+      if (needsAttention?.length) {
+        ctx.push(`Areas needing immediate attention: ${needsAttention.join(', ')}. Prioritize these in conversations.`);
+      }
+      if (engagementLevel) {
+        ctx.push(`Engagement level: ${engagementLevel}. Match energy and interaction style.`);
+      }
     }
-    if (personalization.learning?.avoidancePatterns?.length) {
-      ctx.push(`Avoidance patterns: ${personalization.learning.avoidancePatterns.join(', ')}.`);
-    }
-    if (personalization.contentPreferences?.primaryInterests?.length) {
-      ctx.push(`User interests: ${personalization.contentPreferences.primaryInterests.slice(0, 5).join(', ')}.`);
-    }
-    if (personalization.contentPreferences?.avoidTopics?.length) {
-      ctx.push(`Topics to avoid: ${personalization.contentPreferences.avoidTopics.join(', ')}.`);
-    }
-    if (personalization.servicePersonalization?.engagementStyle) {
-      ctx.push(`Engagement style: ${JSON.stringify(personalization.servicePersonalization.engagementStyle)}.`);
-    }
-    if (personalization.servicePersonalization?.conversationStyle) {
-      ctx.push(`Conversation style: ${JSON.stringify(personalization.servicePersonalization.conversationStyle)}.`);
-    }
-    if (personalization.servicePersonalization?.recommendedServiceTypes?.length) {
-      ctx.push(`Recommended services: ${personalization.servicePersonalization.recommendedServiceTypes.join(', ')}.`);
-    }
-    if (personalization.wellnessProfile?.focusAreas?.length) {
-      ctx.push(`Focus on improving these PERMA happiness areas: ${personalization.wellnessProfile.focusAreas.join(', ')}.`);
-    }
+    
+    // Core Directive
     ctx.push(
-      "Your goals: (1) Use the user's MBTI and communication preferences to shape your tone, language, and approach. (2) Intentionally target the user's PERMA focus areas and happiness drivers to improve their well-being. (3) Keep the user engaged and positive—ask questions, offer encouragement, and suggest relevant topics or services. (4) Adapt your response length: be concise for short questions, and provide more detail for open-ended or emotional topics. (5) Avoid topics and patterns the user dislikes."
+      "CORE OBJECTIVES: (1) Use personality insights to shape tone and approach. (2) Actively target focus areas to improve wellbeing. (3) Connect with user's interests and happiness sources. (4) Provide support level matching their emotional needs. (5) Avoid topics they dislike. (6) Adapt to their engagement level and learning style."
     );
-    return ctx.length ? `Personalization context: ${ctx.join(' ')}.` : '';
+    
+    return ctx.length ? `Personalization context: ${ctx.join(' ')}` : '';
   }
 
   async generateQuickResponse(prompt: string): Promise<string> {
     try {
+      // Enhanced prompt for better formatting
+      const enhancedPrompt = `${prompt}
+
+Format your response with:
+- Clear structure using markdown if helpful
+- Concise, actionable language
+- Encouraging tone focused on happiness and growth
+- Maximum 2-3 sentences for quick responses`;
+
       const response = await this.apiCall('/chat/completions', 'POST', {
         model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 50,
+        messages: [{ role: 'user', content: enhancedPrompt }],
+        max_tokens: 80,
         temperature: 0.3
       });
       

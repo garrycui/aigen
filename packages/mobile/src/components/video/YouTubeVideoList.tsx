@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { View, Text, FlatList, Image, TouchableOpacity, Linking, StyleSheet, Dimensions } from 'react-native';
-import { ThumbsUp, ThumbsDown, Youtube, Eye, Clock } from 'lucide-react-native';
+import { View, Text, FlatList, Image, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { ThumbsUp, ThumbsDown, Youtube, Eye, Clock, Play } from 'lucide-react-native';
 import type { YouTubeVideo } from '../../lib/video/videoRecommender';
+import { theme } from '../../theme';
 
 interface YouTubeVideoListProps {
   videos: YouTubeVideo[];
   topicName?: string;
   onVideoInteraction?: (videoId: string, interactionType: 'view' | 'like' | 'dislike') => void;
+  onVideoPress?: (video: YouTubeVideo) => void; // NEW: Direct video press handler
   watchedVideos?: Set<string>;
   horizontal?: boolean;
   refreshing?: boolean;
@@ -22,12 +24,13 @@ export default function YouTubeVideoList({
   videos, 
   topicName,
   onVideoInteraction,
+  onVideoPress, // NEW: Video press handler
   watchedVideos = new Set(),
   horizontal = false,
   refreshing,
   onRefresh
 }: YouTubeVideoListProps) {
-  const [feedback, setFeedback] = useState<FeedbackMap>({});
+  const [feedback, setFeedback] = useState<Record<string, 'like' | 'dislike' | undefined>>({});
 
   const handleLike = (id: string) => {
     setFeedback(f => ({ ...f, [id]: 'like' }));
@@ -40,8 +43,13 @@ export default function YouTubeVideoList({
   };
 
   const handleVideoPress = (video: YouTubeVideo) => {
-    onVideoInteraction?.(video.videoId, 'view');
-    Linking.openURL(video.url);
+    // Use the new onVideoPress if provided, otherwise fallback to opening URL
+    if (onVideoPress) {
+      onVideoPress(video);
+    } else {
+      onVideoInteraction?.(video.videoId, 'view');
+      // Fallback: could open in browser, but we prefer in-app now
+    }
   };
 
   const formatViewCount = (viewCount?: string) => {
@@ -74,29 +82,48 @@ export default function YouTubeVideoList({
 
     return (
       <View style={cardStyle}>
-        <TouchableOpacity onPress={() => handleVideoPress(item)}>
+        {/* Enhanced Thumbnail with Play Button Overlay */}
+        <TouchableOpacity onPress={() => handleVideoPress(item)} activeOpacity={0.8}>
           <View style={styles.thumbnailContainer}>
             <Image source={{ uri: item.thumbnail }} style={styles.thumbnail} />
-            <View style={styles.playIconContainer}>
-              <Youtube color="#fff" size={horizontal ? 28 : 32} />
+            
+            {/* Play Button Overlay */}
+            <View style={styles.playOverlay}>
+              <View style={styles.playButton}>
+                <Play color="#fff" size={horizontal ? 24 : 28} fill="#fff" />
+              </View>
             </View>
+            
+            {/* Duration Badge */}
             {item.duration && (
               <View style={styles.durationBadge}>
                 <Text style={styles.durationText}>{formatDuration(item.duration)}</Text>
               </View>
             )}
+            
+            {/* Watched Indicator */}
             {isWatched && (
               <View style={styles.watchedBadge}>
                 <Eye color="#fff" size={16} />
               </View>
             )}
+            
+            {/* Embeddable Indicator */}
+            {item.isEmbeddable && (
+              <View style={styles.embeddableBadge}>
+                <Youtube color="#fff" size={12} />
+              </View>
+            )}
           </View>
         </TouchableOpacity>
 
+        {/* Content Container */}
         <View style={styles.contentContainer}>
-          <Text style={[styles.title, horizontal && styles.horizontalTitle]} numberOfLines={horizontal ? 3 : 2}>
-            {item.title}
-          </Text>
+          <TouchableOpacity onPress={() => handleVideoPress(item)} activeOpacity={0.8}>
+            <Text style={[styles.title, horizontal && styles.horizontalTitle]} numberOfLines={horizontal ? 2 : 3}>
+              {item.title}
+            </Text>
+          </TouchableOpacity>
           
           {item.channelTitle && (
             <Text style={styles.channelTitle} numberOfLines={1}>
@@ -107,13 +134,13 @@ export default function YouTubeVideoList({
           <View style={styles.metaContainer}>
             {item.viewCount && (
               <View style={styles.metaItem}>
-                <Eye color="#6b7280" size={14} />
+                <Eye color={theme.colors.gray[500]} size={14} />
                 <Text style={styles.metaText}>{formatViewCount(item.viewCount)}</Text>
               </View>
             )}
             {item.publishedAt && (
               <View style={styles.metaItem}>
-                <Clock color="#6b7280" size={14} />
+                <Clock color={theme.colors.gray[500]} size={14} />
                 <Text style={styles.metaText}>
                   {new Date(item.publishedAt).toLocaleDateString()}
                 </Text>
@@ -127,14 +154,15 @@ export default function YouTubeVideoList({
             </Text>
           )}
 
+          {/* Action Buttons */}
           <View style={styles.actionsContainer}>
             <TouchableOpacity 
               onPress={() => handleLike(item.videoId)} 
               style={[styles.actionButton, feedback[item.videoId] === 'like' && styles.activeButton]}
             >
               <ThumbsUp 
-                color={feedback[item.videoId] === 'like' ? '#22c55e' : '#6b7280'} 
-                size={20} 
+                color={feedback[item.videoId] === 'like' ? theme.colors.success : theme.colors.gray[500]} 
+                size={18} 
               />
               {item.likeCount && (
                 <Text style={styles.actionText}>
@@ -151,10 +179,21 @@ export default function YouTubeVideoList({
               style={[styles.actionButton, feedback[item.videoId] === 'dislike' && styles.activeButton]}
             >
               <ThumbsDown 
-                color={feedback[item.videoId] === 'dislike' ? '#ef4444' : '#6b7280'} 
-                size={20} 
+                color={feedback[item.videoId] === 'dislike' ? theme.colors.error : theme.colors.gray[500]} 
+                size={18} 
               />
             </TouchableOpacity>
+            
+            {/* Play Button for Non-horizontal Layout */}
+            {!horizontal && (
+              <TouchableOpacity 
+                onPress={() => handleVideoPress(item)}
+                style={[styles.actionButton, styles.playActionButton]}
+              >
+                <Play color={theme.colors.primary.main} size={18} />
+                <Text style={[styles.actionText, { color: theme.colors.primary.main }]}>Play</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -170,31 +209,31 @@ export default function YouTubeVideoList({
     contentContainerStyle: horizontal ? styles.horizontalContainer : styles.verticalContainer,
   };
 
-  if (horizontal) {
-    return (
-      <FlatList
-        {...listProps}
-        horizontal
-        pagingEnabled={false}
-        snapToInterval={cardWidth + 12}
-        decelerationRate="fast"
-        ItemSeparatorComponent={() => <View style={{ width: 12 }} />}
-      />
-    );
-  }
-
   return (
-    <FlatList
-      {...listProps}
-      refreshing={refreshing}
-      onRefresh={onRefresh}
-      ListEmptyComponent={
-        <View style={styles.emptyContainer}>
-          <Youtube color="#9ca3af" size={48} />
-          <Text style={styles.emptyText}>No videos found for this topic</Text>
-        </View>
-      }
-    />
+    <>
+      {horizontal ? (
+        <FlatList
+          {...listProps}
+          horizontal
+          pagingEnabled={false}
+          snapToInterval={cardWidth + 12}
+          decelerationRate="fast"
+          ItemSeparatorComponent={() => <View style={{ width: 12 }} />}
+        />
+      ) : (
+        <FlatList
+          {...listProps}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Youtube color={theme.colors.gray[400]} size={48} />
+              <Text style={styles.emptyText}>No videos found for this topic</Text>
+            </View>
+          }
+        />
+      )}
+    </>
   );
 }
 
@@ -220,17 +259,31 @@ const styles = StyleSheet.create({
   thumbnail: {
     width: '100%',
     height: 200,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: theme.colors.gray[100],
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
   },
-  playIconContainer: {
+  playOverlay: {
     position: 'absolute',
-    top: '50%',
-    left: '50%',
-    marginTop: -16,
-    marginLeft: -16,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
+  playButton: {
     backgroundColor: 'rgba(239, 68, 68, 0.9)',
     borderRadius: 32,
-    padding: 8,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   durationBadge: {
     position: 'absolute',
@@ -252,6 +305,14 @@ const styles = StyleSheet.create({
     right: 8,
     backgroundColor: 'rgba(34, 197, 94, 0.9)',
     borderRadius: 12,
+    padding: 4,
+  },
+  embeddableBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    borderRadius: 8,
     padding: 4,
   },
   contentContainer: {
@@ -305,6 +366,9 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 8,
     marginRight: 12,
+  },
+  playActionButton: {
+    backgroundColor: '#f0f9ff',
   },
   activeButton: {
     backgroundColor: '#f3f4f6',

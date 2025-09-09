@@ -156,8 +156,8 @@ export class ChatService {
     updateSessionCallback?: (sessionId: string, updates: any) => Promise<any>
   ): Promise<{ response: string; sentiment?: string; threadId: string; runId: string }> {
     try {
-      // Format personalization context
-      const personalizationCtx = this.assistantsService.formatPersonalizationContext(personalization);
+      // Enhanced personalization context for happiness focus
+      const personalizationCtx = this.formatPersonalizationContextForHappiness(personalization);
       
       // Format session context with previous session summaries
       let sessionCtx = '';
@@ -180,9 +180,8 @@ export class ChatService {
         }
       }
 
-      // FIX: Pass session.threadId (string) instead of entire session object
       const out = await this.assistantsService.runChatAssistant(
-        session.threadId,  // ✅ FIXED: Pass threadId string, not session object
+        session.threadId,
         message, 
         personalizationCtx,
         sessionCtx
@@ -196,15 +195,17 @@ export class ChatService {
             threadId: out.threadId,
             updatedAt: new Date().toISOString()
           });
-          // Update the session object passed in (mutation for immediate use)
           session.threadId = out.threadId;
         } catch (e) {
           console.warn('Failed to update threadId in Firebase:', e);
         }
       }
 
+      // Post-process response for consistent formatting
+      const processedResponse = this.postProcessResponse(out.content);
+
       return {
-        response: out.content,
+        response: processedResponse,
         sentiment: ChatService.analyzeSentiment(message),
         threadId: out.threadId,
         runId: out.runId
@@ -218,6 +219,105 @@ export class ChatService {
         runId: ''
       };
     }
+  }
+
+  /**
+   * Enhanced personalization context formatting focused on happiness
+   */
+  private formatPersonalizationContextForHappiness(personalization: any): string {
+    if (!personalization) return '';
+    
+    const ctx: string[] = [];
+    
+    // User Core Information with happiness focus
+    if (personalization.userCore) {
+      const { mbtiType, communicationStyle, socialPreference, challengeLevel, emotionalSupport, learningStyle } = personalization.userCore;
+      
+      if (mbtiType) {
+        ctx.push(`User MBTI: ${mbtiType}. Adapt your communication to support their personality type and happiness.`);
+      }
+      if (communicationStyle) {
+        ctx.push(`Preferred communication: ${communicationStyle}. Match this style to maximize engagement and joy.`);
+      }
+      if (emotionalSupport) {
+        ctx.push(`Emotional support needs: ${emotionalSupport}. Provide appropriate encouragement and validation.`);
+      }
+    }
+    
+    // Wellness Profile with PERMA focus
+    if (personalization.wellnessProfile) {
+      const { focusAreas, strengths, happinessSources, wellnessGoals, currentScores } = personalization.wellnessProfile;
+      
+      if (focusAreas?.length) {
+        ctx.push(`🎯 PRIORITY: Help improve these happiness areas: ${focusAreas.join(', ')}. Focus conversations on building these PERMA dimensions.`);
+      }
+      if (strengths?.length) {
+        ctx.push(`💪 User's happiness strengths: ${strengths.join(', ')}. Leverage and celebrate these areas.`);
+      }
+      if (happinessSources?.length) {
+        ctx.push(`😊 What makes user happy: ${happinessSources.join(', ')}. Reference these joy sources in responses.`);
+      }
+      if (wellnessGoals?.length) {
+        ctx.push(`🎯 Happiness goals: ${wellnessGoals.join(', ')}. Support progress toward these objectives.`);
+      }
+      if (currentScores) {
+        const overallHappiness = Object.values(currentScores as Record<string, number>).reduce((a: number, b: number) => a + b, 0) / 5;
+        ctx.push(`📊 Current happiness level: ${overallHappiness.toFixed(1)}/10. Adjust tone and approach accordingly.`);
+      }
+    }
+    
+    // Content Preferences
+    if (personalization.contentPreferences) {
+      const { primaryInterests, emergingInterests } = personalization.contentPreferences;
+      
+      if (primaryInterests?.length) {
+        ctx.push(`❤️ Core interests: ${primaryInterests.slice(0, 5).join(', ')}. Connect advice to these interests for higher engagement.`);
+      }
+      if (emergingInterests?.length) {
+        ctx.push(`🌱 Growing interests: ${emergingInterests.join(', ')}. Nurture these developing passions.`);
+      }
+    }
+    
+    // Core happiness directive
+    ctx.push(
+      "🌟 CORE MISSION: Your primary goal is to increase this user's happiness and wellbeing. " +
+      "(1) Use personality insights to create resonating responses. " +
+      "(2) Actively target focus areas to build happiness. " +
+      "(3) Connect with their joy sources and interests. " +
+      "(4) Provide support that matches their emotional needs. " +
+      "(5) Maintain an encouraging, growth-focused tone. " +
+      "(6) Ask engaging questions that promote self-discovery and positive reflection."
+    );
+    
+    return ctx.length ? `Personalization context: ${ctx.join(' ')}` : '';
+  }
+
+  /**
+   * Post-process response to ensure consistent formatting for ChatMessage
+   */
+  private postProcessResponse(content: string): string {
+    let processed = content;
+    
+    // Ensure proper spacing for headers
+    processed = processed.replace(/^(#{1,3})\s*(.+)$/gm, '\n$1 $2\n');
+    
+    // Ensure proper list formatting
+    processed = processed.replace(/^(\s*)[-*+]\s+(.+)$/gm, '$1- $2');
+    processed = processed.replace(/^(\s*)(\d+\.)\s+(.+)$/gm, '$1$2 $3');
+    
+    // Ensure proper quote formatting
+    processed = processed.replace(/^>\s*(.+)$/gm, '> $1');
+    
+    // Clean up excessive whitespace
+    processed = processed.replace(/\n{3,}/g, '\n\n');
+    processed = processed.trim();
+    
+    // Add engagement element if response is getting long and doesn't have one
+    if (processed.length > 200 && !processed.includes('?') && !processed.includes('What') && !processed.includes('How')) {
+      processed += '\n\nWhat would you like to explore further? 🤔';
+    }
+    
+    return processed;
   }
 
   async closeSession(
@@ -344,21 +444,21 @@ export class ChatService {
 
   async generateSessionTitle(conversationStart: string): Promise<string> {
     try {
-      const prompt = `Generate a concise, descriptive title (3-5 words) for a chat conversation that starts with: "${conversationStart.slice(0, 200)}..."
+      const prompt = `Generate a concise, positive title (3-5 words) for a happiness-focused conversation that starts with: "${conversationStart.slice(0, 200)}..."
 
 Rules:
-- Focus on the main topic or theme
+- Focus on the main happiness theme or growth area
 - Keep it under 25 characters
-- Make it specific and helpful
-- Don't use quotes
-- Examples: "Career Advice", "Anxiety Support", "Learning Python", "Relationship Help"
+- Make it uplifting and specific
+- Use title case
+- No quotes
+- Examples: "Building Daily Joy", "Career Growth Chat", "Mindfulness Journey", "Relationship Wisdom"
 
 Title:`;
 
       const response = await this.assistantsService.generateQuickResponse(prompt);
       const title = response.trim().replace(/['"]/g, '');
       
-      // Validate title length and content
       if (title.length > 30 || title.length < 3) {
         return this.generateFallbackTitle(conversationStart);
       }
@@ -371,19 +471,23 @@ Title:`;
   }
 
   private generateFallbackTitle(text: string): string {
-    const words = text.toLowerCase().split(' ').filter(w => w.length > 3);
-    const keywords = ['help', 'advice', 'learn', 'support', 'question', 'problem', 'goal', 'plan'];
+    const happinessWords = ['happiness', 'joy', 'wellbeing', 'growth', 'positive', 'mindful'];
+    const actionWords = ['building', 'exploring', 'discovering', 'creating', 'nurturing'];
     
-    for (const keyword of keywords) {
-      if (words.includes(keyword)) {
-        return `${keyword.charAt(0).toUpperCase() + keyword.slice(1)} Chat`;
+    const words = text.toLowerCase().split(' ').filter(w => w.length > 3);
+    
+    // Look for happiness-related words
+    for (const word of words) {
+      if (happinessWords.some(hw => word.includes(hw))) {
+        const action = actionWords[Math.floor(Math.random() * actionWords.length)];
+        return `${action.charAt(0).toUpperCase() + action.slice(1)} ${word.charAt(0).toUpperCase() + word.slice(1)}`;
       }
     }
     
     const hour = new Date().getHours();
-    if (hour < 12) return 'Morning Chat';
-    if (hour < 17) return 'Afternoon Chat';
-    return 'Evening Chat';
+    if (hour < 12) return 'Morning Happiness Chat';
+    if (hour < 17) return 'Afternoon Reflection';
+    return 'Evening Growth Talk';
   }
 
   async categorizeSession(messages: ChatMessage[]): Promise<{ theme: string; summary: string }> {

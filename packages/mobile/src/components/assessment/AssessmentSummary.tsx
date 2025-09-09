@@ -8,10 +8,11 @@ import {
 } from 'react-native';
 import { Brain, Star } from 'lucide-react-native';
 import { theme } from '../../theme';
-import { AssessmentResult } from '../../lib/assessment/analyzer';
+import { UnifiedPersonalizationProfile } from '../../lib/personalization/types';
 
 interface AssessmentSummaryProps {
-  result: AssessmentResult;
+  profile: UnifiedPersonalizationProfile;
+  userName: string;
   onContinue: () => void;
 }
 
@@ -34,8 +35,8 @@ const mbtiDescriptions: Record<string, { title: string; description: string; col
   'ESFP': { title: 'The Entertainer', description: 'Spontaneous and enthusiastic performer', color: '#E11D48' },
 };
 
-export default function AssessmentSummary({ result, onContinue }: AssessmentSummaryProps) {
-  const mbtiInfo = mbtiDescriptions[result.mbtiType] || {
+export default function AssessmentSummary({ profile, userName, onContinue }: AssessmentSummaryProps) {
+  const mbtiInfo = mbtiDescriptions[profile.userCore.mbtiType] || {
     title: 'Unique Personality',
     description: 'Special combination of traits',
     color: '#6366F1'
@@ -46,7 +47,7 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
       <View style={styles.header}>
         <View style={styles.celebration}>
           <Star size={32} color="#F59E0B" />
-          <Text style={styles.congratsText}>Congratulations, {result.personalInfo.name || 'Friend'}!</Text>
+          <Text style={styles.congratsText}>Congratulations, {userName || 'Friend'}!</Text>
           <Text style={styles.subText}>Your happiness profile is ready</Text>
         </View>
       </View>
@@ -58,7 +59,7 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
           <Text style={styles.cardTitle}>Your MBTI Type</Text>
         </View>
         <View style={[styles.mbtiTypeContainer, { backgroundColor: mbtiInfo.color + '15' }]}>
-          <Text style={[styles.mbtiType, { color: mbtiInfo.color }]}>{result.mbtiType}</Text>
+          <Text style={[styles.mbtiType, { color: mbtiInfo.color }]}>{profile.userCore.mbtiType}</Text>
           <Text style={[styles.mbtiTitle, { color: mbtiInfo.color }]}>{mbtiInfo.title}</Text>
           <Text style={styles.mbtiDescription}>{mbtiInfo.description}</Text>
         </View>
@@ -67,51 +68,101 @@ export default function AssessmentSummary({ result, onContinue }: AssessmentSumm
       {/* PERMA Scores with Focus Areas */}
       <View style={[styles.card, styles.goalCard]}>
         <Text style={styles.goalTitle}>Your Happiness Dimensions (PERMA)</Text>
-        <View>
-          <Text style={styles.goalText}>Positive Emotion (PE): {result.happinessScores.positiveEmotion} / 10</Text>
-          <Text style={styles.goalText}>Engagement (E): {result.happinessScores.engagement} / 10</Text>
-          <Text style={styles.goalText}>Relationships (R): {result.happinessScores.relationships} / 10</Text>
-          <Text style={styles.goalText}>Meaning (M): {result.happinessScores.meaning} / 10</Text>
-          <Text style={styles.goalText}>Accomplishment (A): {result.happinessScores.accomplishment} / 10</Text>
+        <View style={styles.permaScoresContainer}>
+          <View style={styles.permaScore}>
+            <Text style={styles.permaLabel}>Positive Emotion</Text>
+            <View style={styles.scoreBar}>
+              <View style={[styles.scoreFill, { width: `${profile.wellnessProfile.currentScores.positiveEmotion * 10}%` }]} />
+            </View>
+            <Text style={styles.scoreNumber}>{profile.wellnessProfile.currentScores.positiveEmotion}/10</Text>
+          </View>
+          
+          <View style={styles.permaScore}>
+            <Text style={styles.permaLabel}>Engagement</Text>
+            <View style={styles.scoreBar}>
+              <View style={[styles.scoreFill, { width: `${profile.wellnessProfile.currentScores.engagement * 10}%` }]} />
+            </View>
+            <Text style={styles.scoreNumber}>{profile.wellnessProfile.currentScores.engagement}/10</Text>
+          </View>
+          
+          <View style={styles.permaScore}>
+            <Text style={styles.permaLabel}>Relationships</Text>
+            <View style={styles.scoreBar}>
+              <View style={[styles.scoreFill, { width: `${profile.wellnessProfile.currentScores.relationships * 10}%` }]} />
+            </View>
+            <Text style={styles.scoreNumber}>{profile.wellnessProfile.currentScores.relationships}/10</Text>
+          </View>
+          
+          <View style={styles.permaScore}>
+            <Text style={styles.permaLabel}>Meaning</Text>
+            <View style={styles.scoreBar}>
+              <View style={[styles.scoreFill, { width: `${profile.wellnessProfile.currentScores.meaning * 10}%` }]} />
+            </View>
+            <Text style={styles.scoreNumber}>{profile.wellnessProfile.currentScores.meaning}/10</Text>
+          </View>
+          
+          <View style={styles.permaScore}>
+            <Text style={styles.permaLabel}>Accomplishment</Text>
+            <View style={styles.scoreBar}>
+              <View style={[styles.scoreFill, { width: `${profile.wellnessProfile.currentScores.accomplishment * 10}%` }]} />
+            </View>
+            <Text style={styles.scoreNumber}>{profile.wellnessProfile.currentScores.accomplishment}/10</Text>
+          </View>
         </View>
         
         {/* Show focus areas */}
-        {result.personalization?.wellnessProfile?.focusAreas.length > 0 && (
+        {profile.wellnessProfile.focusAreas.length > 0 && (
           <View style={styles.focusAreasContainer}>
             <Text style={styles.focusAreasTitle}>Areas to Focus On:</Text>
             <Text style={styles.focusAreasText}>
-              {result.personalization.wellnessProfile.focusAreas.join(', ')}
+              {profile.wellnessProfile.focusAreas
+                .map(area => area.charAt(0).toUpperCase() + area.slice(1))
+                .join(', ')
+              }
             </Text>
           </View>
         )}
       </View>
 
-      {/* Personalized Interests */}
+      {/* Enhanced Interests Display */}
       <View style={[styles.card, styles.goalCard]}>
-        <Text style={styles.goalTitle}>Your Content Preferences</Text>
-        {result.personalization?.contentPreferences?.primaryInterests && 
-         result.personalization.contentPreferences.primaryInterests.length > 0 && (
-          <Text style={styles.goalText}>
-            {result.personalization.contentPreferences.primaryInterests.slice(0, 5).join(', ')}
-          </Text>
+        <Text style={styles.goalTitle}>Your Top Interests</Text>
+        {profile.contentPreferences.primaryInterests.length > 0 && (
+          <View style={styles.interestsGrid}>
+            {profile.contentPreferences.primaryInterests.slice(0, 6).map((interest, index) => (
+              <View key={index} style={styles.interestBadge}>
+                <Text style={styles.interestBadgeText}>{interest}</Text>
+              </View>
+            ))}
+          </View>
         )}
       </View>
 
       {/* Communication Style */}
-      {result.personalization?.chatPersona && (
+      <View style={[styles.card, styles.goalCard]}>
+        <Text style={styles.goalTitle}>Your AI Chat Style</Text>
+        <Text style={styles.goalText}>
+          Communication: {profile.userCore.communicationStyle}
+        </Text>
+        <Text style={styles.goalText}>
+          Support Level: {profile.userCore.emotionalSupport}
+        </Text>
+      </View>
+
+      {/* Happiness Sources */}
+      {profile.wellnessProfile.happinessSources.length > 0 && (
         <View style={[styles.card, styles.goalCard]}>
-          <Text style={styles.goalTitle}>Your AI Chat Style</Text>
-          <Text style={styles.goalText}>
-            Communication: {result.personalization.chatPersona.communicationStyle}
-          </Text>
-          <Text style={styles.goalText}>
-            Support Level: {result.personalization.chatPersona.emotionalSupport}
-          </Text>
+          <Text style={styles.goalTitle}>What Makes You Happy</Text>
+          <View style={styles.happinessSourcesContainer}>
+            {profile.wellnessProfile.happinessSources.map((source, index) => (
+              <Text key={index} style={styles.happinessSource}>• {source}</Text>
+            ))}
+          </View>
         </View>
       )}
 
       <TouchableOpacity style={styles.continueButton} onPress={onContinue}>
-        <Text style={styles.continueButtonText}>Explore Your Personalized Dashboard</Text>
+        <Text style={styles.continueButtonText}>View Your Profile</Text>
       </TouchableOpacity>
 
       <View style={styles.footer}>
@@ -249,5 +300,65 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: '#92400E',
     textTransform: 'capitalize',
+  },
+  permaScoresContainer: {
+    gap: theme.spacing.md,
+  },
+  permaScore: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  permaLabel: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    flex: 1,
+    fontWeight: '500',
+  },
+  scoreBar: {
+    flex: 2,
+    height: 8,
+    backgroundColor: theme.colors.gray[200],
+    borderRadius: 4,
+    marginHorizontal: theme.spacing.md,
+    overflow: 'hidden',
+  },
+  scoreFill: {
+    height: '100%',
+    backgroundColor: theme.colors.primary.main,
+    borderRadius: 4,
+  },
+  scoreNumber: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    fontWeight: 'bold',
+    minWidth: 40,
+    textAlign: 'right',
+  },
+  interestsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.sm,
+  },
+  interestBadge: {
+    backgroundColor: theme.colors.primary.light + '20',
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+  },
+  interestBadgeText: {
+    ...theme.typography.caption,
+    color: theme.colors.primary.main,
+    fontWeight: '600',
+  },
+  happinessSourcesContainer: {
+    marginTop: theme.spacing.sm,
+  },
+  happinessSource: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    marginBottom: theme.spacing.xs,
+    lineHeight: 20,
   },
 });

@@ -6,7 +6,8 @@ import { theme } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
 import { useInteractionTracking } from '../../hooks/useInteractionTracking';
-import { useDynamicPersonalization } from '../../hooks/useDynamicPersonalization';
+import { useUnifiedPersonalization } from '../../hooks/useUnifiedPersonalization'; // UPDATED: Replace useDynamicPersonalization
+
 // Import chat service and profiler (implement these in lib/chat/)
 import { ChatService, ChatMessage, UserContext, ChatSession } from '../../lib/chat/chatService';
 import { SessionContext } from '../../lib/chat/sessionManager';
@@ -50,8 +51,9 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
     getChatMessages,
   } = useFirebase();
 
-  const { personalization } = useDynamicPersonalization(user?.id || '');
-  const { trackChatInteraction, trackAnalyticsResult } = useInteractionTracking(user?.id || '');
+  // UPDATED: Use unified personalization instead of dynamic
+  const { profile: personalization, loading: personalizationLoading } = useUnifiedPersonalization(user?.id || '');
+  const { trackChatInteraction, trackAnalyticsResult, trackTopicEngagement } = useInteractionTracking(user?.id || '');
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
@@ -59,7 +61,6 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
   const [userContext, setUserContext] = useState<UserContext | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [userInsights, setUserInsights] = useState<any>(null);
-  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [sessionTitle, setSessionTitle] = useState<string>('New Chat');
@@ -96,7 +97,6 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
         const analytics = await chatService.analyzeConversation(currentSession!, personalization);
         if (!cancelled) {
           setUserInsights(analytics.personalizationUpdates);
-          setSuggestedQuestions(analytics.suggestedQuestions);
           // Track analytics result to update personalization
           trackAnalyticsResult({
             sessionId: currentSession!.id,
@@ -109,10 +109,9 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
         }
         setIsLoading(false);
       } else {
-        const { insights, suggestedQuestions } = await chatService.getUserInsightsAndSuggestions(messages);
+        const { insights } = await chatService.getUserInsightsAndSuggestions(messages);
         if (!cancelled) {
           setUserInsights(insights);
-          setSuggestedQuestions(suggestedQuestions);
           if (messages.length > 0 && messages.length % 10 === 0 && insights) {
             const summary = chatService.generateSummaryMessage
               ? chatService.generateSummaryMessage(insights)
@@ -135,16 +134,6 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
     return () => { cancelled = true; };
   }, [messages]);
 
-  useEffect(() => {
-    if (
-      suggestedQuestions.length > 0 &&
-      messages.length > 0 &&
-      messages.filter(m => m.role === 'user' || m.role === 'assistant').length % 5 === 0
-    ) {
-      injectTryAskingMessage();
-    }
-  }, [messages, suggestedQuestions]);
-
   // Monitor message count and auto-create new sessions
   useEffect(() => {
     if (currentSession && messages.length > 50) { // Limit sessions to 50 messages
@@ -159,39 +148,16 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
     }
   }, [messages.length, currentSession, sessionTitle]);
 
-  const injectTryAskingMessage = () => {
-    if (messages.some(m => m.role === 'assistant' && m.id.startsWith('try-asking'))) return;
-    const tryMsg: ExtendedChatMessage = {
-      id: `try-asking-${Date.now()}`,
-      content: '',
-      role: 'assistant',
-      timestamp: new Date().toISOString(),
-      isAudioMessage: false,
-      transcript: undefined,
-      audioUri: undefined,
-      sentiment: undefined
-    };
-    setMessages(prev => [...prev, tryMsg]);
-  };
-
   const initializeChat = async () => {
     try {
       setIsInitializing(true);
-      const assessmentResult = await getUserAssessment(user!.id);
-      let assessment = null;
-      if (assessmentResult.success && assessmentResult.data?.length > 0) {
-        assessment = assessmentResult.data[0];
-        setUserContext({
-          mbtiType: assessment.mbti_type,
-          aiPreference: assessment.ai_preference,
-          communicationStyle: assessment.communication_style,
-          learningPreference: assessment.learning_preference,
-          emotionalState: assessment.emotional_state,
-          supportNeeds: assessment.support_needs,
-          perma: assessment.perma,
-          interests: assessment.interests,
-          name: assessment.nickname,
-        });
+      
+      // UPDATED: Use unified personalization profile instead of assessment
+      if (personalization) {
+        const userContext = buildUserContextFromProfile(personalization);
+        setUserContext(userContext);
+      } else {
+        console.log('No personalization profile found, user may need to complete assessment');
       }
 
       const sessionsResult = await getChatSessions(user!.id);
@@ -458,7 +424,15 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
   const sendWelcomeMessage = () => {
     const welcomeMsg: ExtendedChatMessage = {
       id: `welcome-${Date.now()}`,
-      content: "👋 Hi! I'm your AI companion. How can I help you today?",
+      content: `👋 **Hi there!** I'm your AI happiness companion. 
+
+I'm here to help you discover what brings you joy and support your wellbeing journey.
+
+**What would you like to explore today?**
+- Share what's on your mind
+- Ask about building happiness habits  
+- Discuss your goals and dreams
+- Or just chat about anything! 😊`,
       role: 'assistant',
       timestamp: new Date().toISOString(),
       sentiment: 'positive',
@@ -522,7 +496,7 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
       threadId: currentSession.threadId,
     });
 
-    // Show thinking message
+    // Show thinking message with better formatting
     const thinkingMsg: ExtendedChatMessage = {
       id: `thinking-${Date.now()}`,
       content: 'AI is thinking...',
@@ -533,10 +507,9 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
     setMessages(prev => [...prev, thinkingMsg]);
 
     try {
-      // Create wrapper function for updateChatSession
       const updateSessionWrapper = async (sessionId: string, updates: any): Promise<any> => {
         const result = await updateChatSession(sessionId, updates);
-        return result; // Return the full result, but the sessionManager will handle it
+        return result;
       };
 
       const { response, sentiment, threadId, runId } = await chatService.generateResponse(
@@ -544,8 +517,8 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
         currentSession,
         userContext || undefined,
         personalization,
-        sessionContext || undefined, // Pass session context
-        updateSessionWrapper // Pass wrapper function
+        sessionContext || undefined,
+        updateSessionWrapper
       );
       
       // Handle threadId changes
@@ -562,7 +535,7 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
       
       const aiMsg: ExtendedChatMessage = {
         id: `assistant-${Date.now()}`,
-        content: response,
+        content: response, // Response is already formatted by chatService.postProcessResponse
         role: 'assistant',
         timestamp: new Date().toISOString(),
         sentiment: safeSentiment,
@@ -574,26 +547,166 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
       setMessages(prev => [...prev, aiMsg]);
       await saveChatMessage(currentSession.id, removeUndefinedFields(aiMsg));
 
-      // Track AI response
+      // Enhanced tracking with happiness focus
       trackChatInteraction({
         messageId: aiMsg.id,
         userMessage: text,
         aiResponse: response,
-        topics: [],
+        topics: extractTopicsFromMessage(text, response),
         sentiment: aiMsg.sentiment || 'neutral',
-        engagementLevel: 5,
+        engagementLevel: calculateEngagementLevel(text, response),
         timestamp: aiMsg.timestamp,
         threadId,
-        runId
+        runId,
+        permaSignals: mapResponseToPermaSignals(response)
       });
       
     } catch (e) {
       setMessages(prev => prev.filter(m => m.id !== thinkingMsg.id));
-      Alert.alert('Error', 'Failed to get AI response.');
+      
+      // Better error message with formatting
+      const errorMsg: ExtendedChatMessage = {
+        id: `error-${Date.now()}`,
+        content: `I apologize, but I'm having some technical difficulties right now. 
+
+**Please try asking your question again** - I'm here to help! 🤖
+
+*If the issue persists, you can try starting a new conversation.*`,
+        role: 'assistant',
+        timestamp: new Date().toISOString(),
+        sentiment: 'neutral',
+        isAudioMessage: false
+      };
+      
+      setMessages(prev => [...prev, errorMsg]);
     } finally {
       setIsTyping(false);
       setIsLoading(false);
     }
+  };
+
+  // Enhanced topic extraction for happiness focus
+  const extractTopicsFromMessage = (userMessage: string, aiResponse: string): string[] => {
+    const topics: string[] = [];
+    const combinedText = `${userMessage} ${aiResponse}`.toLowerCase();
+    
+    // Check against user's primary interests and happiness sources
+    if (personalization?.contentPreferences?.primaryInterests) {
+      personalization.contentPreferences.primaryInterests.forEach(interest => {
+        if (combinedText.includes(interest.toLowerCase())) {
+          topics.push(interest);
+          trackTopicEngagement({
+            topic: interest,
+            engagementScore: 8,
+            interactionType: 'mention',
+            context: `Interest mentioned: "${userMessage.slice(0, 100)}..."`
+          });
+        }
+      });
+    }
+    
+    // Check against happiness sources
+    if (personalization?.wellnessProfile?.happinessSources) {
+      personalization.wellnessProfile.happinessSources.forEach(source => {
+        const sourceKeywords = source.toLowerCase().split(' ');
+        if (sourceKeywords.some(keyword => combinedText.includes(keyword))) {
+          topics.push(source);
+          trackTopicEngagement({
+            topic: source,
+            engagementScore: 9,
+            interactionType: 'followup',
+            context: `Happiness source discussed: "${userMessage.slice(0, 100)}..."`
+          });
+        }
+      });
+    }
+    
+    // Enhanced happiness-focused topic detection
+    const happinessTopicKeywords = [
+      { keywords: ['happy', 'happiness', 'joy', 'joyful', 'delight'], topic: 'happiness-building' },
+      { keywords: ['grateful', 'gratitude', 'thankful', 'appreciate'], topic: 'gratitude-practice' },
+      { keywords: ['goal', 'achievement', 'accomplish', 'success'], topic: 'goal-achievement' },
+      { keywords: ['relationship', 'friend', 'family', 'love', 'connect'], topic: 'relationships' },
+      { keywords: ['mindful', 'meditation', 'peaceful', 'calm'], topic: 'mindfulness' },
+      { keywords: ['creative', 'art', 'music', 'write', 'express'], topic: 'creative-expression' },
+      { keywords: ['health', 'wellness', 'exercise', 'energy'], topic: 'physical-wellbeing' },
+      { keywords: ['learn', 'grow', 'develop', 'improve'], topic: 'personal-growth' },
+      { keywords: ['meaning', 'purpose', 'values', 'significant'], topic: 'life-meaning' },
+      { keywords: ['flow', 'engaged', 'absorbed', 'passionate'], topic: 'engagement' }
+    ];
+    
+    happinessTopicKeywords.forEach(({ keywords, topic }) => {
+      const mentioned = keywords.some(keyword => combinedText.includes(keyword));
+      if (mentioned && !topics.includes(topic)) {
+        topics.push(topic);
+        trackTopicEngagement({
+          topic,
+          engagementScore: 7,
+          interactionType: 'mention',
+          context: `Happiness topic discovered: "${userMessage.slice(0, 100)}..."`
+        });
+      }
+    });
+    
+    return [...new Set(topics)];
+  };
+
+  // Enhanced engagement calculation for happiness focus
+  const calculateEngagementLevel = (userMessage: string, aiResponse: string): number => {
+    let score = 5; // Base score
+    
+    // Boost for emotional expression and happiness indicators
+    const happinessWords = ['happy', 'joy', 'excited', 'grateful', 'love', 'amazing', 'wonderful'];
+    const emotionalWords = ['feel', 'emotion', 'heart', 'soul', 'passion', 'dream'];
+    const growthWords = ['learn', 'grow', 'improve', 'better', 'progress', 'develop'];
+    
+    if (happinessWords.some(word => userMessage.toLowerCase().includes(word))) {
+      score += 3; // High boost for happiness expressions
+    }
+    
+    if (emotionalWords.some(word => userMessage.toLowerCase().includes(word))) {
+      score += 2; // Emotional engagement
+    }
+    
+    if (growthWords.some(word => userMessage.toLowerCase().includes(word))) {
+      score += 2; // Growth mindset
+    }
+    
+    // Length and question indicators
+    if (userMessage.length > 50) score += 1;
+    if (userMessage.includes('?')) score += 1;
+    if (aiResponse.length > 100) score += 1;
+    
+    // Future-focused and action-oriented language
+    const actionWords = ['will', 'going to', 'plan', 'want to', 'hope to', 'excited to'];
+    if (actionWords.some(word => userMessage.toLowerCase().includes(word))) {
+      score += 2;
+    }
+    
+    return Math.min(10, Math.max(1, score));
+  };
+
+  // Enhanced PERMA signal mapping with happiness focus
+  const mapResponseToPermaSignals = (response: string): Record<string, number> => {
+    const signals: Record<string, number> = {};
+    const responseLower = response.toLowerCase();
+    
+    const permaIndicators = {
+      positiveEmotion: ['joy', 'happy', 'positive', 'grateful', 'optimistic', 'delight', 'wonderful', 'amazing', 'love', 'excited'],
+      engagement: ['engage', 'flow', 'passionate', 'absorbed', 'focus', 'immersed', 'energy', 'enthusiasm'],
+      relationships: ['connect', 'relationship', 'friend', 'family', 'social', 'love', 'support', 'together', 'bond'],
+      meaning: ['purpose', 'meaning', 'values', 'significant', 'meaningful', 'worthwhile', 'important', 'matter'],
+      accomplishment: ['achieve', 'success', 'accomplish', 'goal', 'progress', 'proud', 'victory', 'complete', 'mastery']
+    };
+    
+    Object.entries(permaIndicators).forEach(([dimension, keywords]) => {
+      const matches = keywords.filter(keyword => responseLower.includes(keyword)).length;
+      if (matches > 0) {
+        signals[dimension] = Math.min(3, matches);
+      }
+    });
+    
+    return signals;
   };
 
   const handleSessionTransition = async (pendingMessage: string) => {
@@ -721,12 +834,13 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
         messageId: aiMsg.id,
         userMessage: text,
         aiResponse: response,
-        topics: [],
+        topics: extractTopicsFromMessage(text, response), // NEW: Extract topics
         sentiment: aiMsg.sentiment || 'neutral',
-        engagementLevel: 5,
+        engagementLevel: calculateEngagementLevel(text, response), // NEW: Calculate engagement
         timestamp: aiMsg.timestamp,
         threadId,
-        runId
+        runId,
+        permaSignals: mapResponseToPermaSignals(response) // NEW: Map to PERMA
       });
     } catch (e) {
       setMessages(prev => prev.filter(m => m.id !== thinkingMsg.id));
@@ -737,11 +851,27 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
     }
   };
 
-  const handleAskSuggested = (q: string) => {
-    setInputValue(q);
+  // UPDATED: Build UserContext from UnifiedPersonalizationProfile
+  const buildUserContextFromProfile = (profile: any) => {
+    if (!profile) return null;
+    
+    return {
+      mbtiType: profile.userCore?.mbtiType,
+      communicationStyle: profile.userCore?.communicationStyle,
+      learningPreference: profile.userCore?.learningStyle,
+      emotionalState: profile.computed?.needsAttention?.length > 0 ? 'needs_support' : 'stable',
+      supportNeeds: profile.wellnessProfile?.focusAreas?.join(', '),
+      perma: profile.wellnessProfile?.currentScores,
+      interests: profile.contentPreferences?.primaryInterests,
+      name: user?.name || 'User',
+      // NEW: Add wellness context
+      wellnessFocus: profile.wellnessProfile?.focusAreas,
+      happinessSources: profile.wellnessProfile?.happinessSources,
+      currentMood: profile.computed?.overallHappiness
+    };
   };
 
-  // UI rendering
+  // UI rendering with enhanced messaging
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: theme.colors.gray[50] }}
@@ -758,8 +888,6 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
       <View style={{ flex: 1 }}>
         <ChatMessagesList
           messages={messages}
-          suggestedQuestions={suggestedQuestions}
-          onAskSuggested={handleAskSuggested}
           scrollViewRef={scrollViewRef}
         />
         {(isLoading || isInitializing) && (
@@ -774,6 +902,7 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
         isLoading={isLoading || isTyping}
         inputValue={inputValue}
         setInputValue={setInputValue}
+        userPersonalization={personalization}
       />
     </KeyboardAvoidingView>
   );

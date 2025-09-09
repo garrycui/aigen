@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   RefreshControl,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
@@ -21,13 +22,21 @@ import {
   Heart,
   MessageCircle,
   TrendingUp,
-  Star
+  Star,
+  Activity,
+  Zap,
+  Settings,
+  Award,
+  BarChart3
 } from 'lucide-react-native';
 import { theme, screenStyles } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { useLatestAssessment, clearAssessmentCache } from '../../hooks/useLatestAssessment';
+import { usePersonalization } from '../../hooks/usePersonalization';
+
+const { width } = Dimensions.get('window');
+const cardWidth = (width - theme.spacing.lg * 3) / 2;
 
 interface UserProfileData {
   name: string;
@@ -47,52 +56,27 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Use the enhanced hook with all its capabilities
-  const { 
-    assessment: assessmentResult, 
-    loading: assessmentLoading, 
-    hasAssessment,
-    refresh: refreshAssessment,
-    // Use composite helpers for easy data access
-    getProfileData,
-    getChatConfig,
-    getContentConfig,
-    getWellnessConfig,
-    // Specific helpers for display
-    getMBTIType,
-    getHappinessScores,
-    getFocusAreas,
-    getStrengths,
-    getPrimaryInterests,
-    getRecommendedServices,
-    getWellnessGoals,
-    getUserName,
-    getLowestPERMAScore,
-    getHighestPERMAScore,
-    needsUpdate
-  } = useLatestAssessment(user?.id || '');
+  const {
+    profile: personalizationProfile,
+    loading: personalizationLoading,
+    loadProfile,
+    generateTopicQueries
+  } = usePersonalization(user?.id || '');
 
-  // Only reload profile data when screen is focused - don't refresh assessment automatically
   useFocusEffect(
     React.useCallback(() => {
       if (user) {
         loadUserData();
+        loadProfile();
       }
-    }, [user])
+    }, [user, loadProfile])
   );
-
-  useEffect(() => {
-    if (user) {
-      loadUserData();
-    }
-  }, [user]);
 
   const loadUserData = async () => {
     if (!user) return;
 
     try {
       setLoading(true);
-      // Load user profile
       const profileResult = await getUserProfile(user.id);
       if (profileResult.success) {
         setProfileData({
@@ -118,8 +102,7 @@ export default function ProfileScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     await loadUserData();
-    // Only refresh assessment if user explicitly pulls to refresh
-    refreshAssessment();
+    await loadProfile();
     setRefreshing(false);
   };
 
@@ -146,10 +129,6 @@ export default function ProfileScreen() {
   };
 
   const handleRetakeAssessment = () => {
-    // Clear the assessment cache before navigating to assessment
-    if (user) {
-      clearAssessmentCache(user.id);
-    }
     navigation.navigate('AssessmentIntro');
   };
 
@@ -159,262 +138,96 @@ export default function ProfileScreen() {
     try {
       const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
       return date.toLocaleDateString('en-US', { 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
+        month: 'short', 
+        day: 'numeric',
+        year: 'numeric'
       });
     } catch {
       return 'N/A';
     }
   };
 
-  const renderInfoCard = (icon: React.ReactNode, title: string, value: string, subtitle?: string) => (
-    <View style={screenStyles.card}>
-      <View style={styles.infoCardHeader}>
+  const renderStatCard = (icon: React.ReactNode, title: string, value: string, color: string = theme.colors.primary.main) => (
+    <View style={[styles.statCard, { width: cardWidth }]}>
+      <View style={[styles.statIcon, { backgroundColor: color + '20' }]}>
         {icon}
-        <Text style={styles.infoCardTitle}>{title}</Text>
       </View>
-      <Text style={styles.infoCardValue}>{value}</Text>
-      {subtitle && <Text style={styles.infoCardSubtitle}>{subtitle}</Text>}
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statTitle}>{title}</Text>
     </View>
   );
 
-  const renderPersonalityInsights = () => {
-    if (!hasAssessment) return null;
+  const renderPermaChart = () => {
+    if (!personalizationProfile?.wellnessProfile?.currentScores) return null;
 
-    const mbtiType = getMBTIType();
-    const chatConfig = getChatConfig();
-    const userName = getUserName();
-
+    const { currentScores } = personalizationProfile.wellnessProfile;
+    const maxScore = Math.max(...Object.values(currentScores));
+    
     return (
-      <View style={screenStyles.contentWithPadding}>
-        <Text style={screenStyles.headerTitle}>Personality Profile</Text>
-        
-        {/* User Name */}
-        {userName && renderInfoCard(
-          <User size={20} color="#8B5CF6" />,
-          'Your Name',
-          userName,
-          'From your assessment'
-        )}
-
-        {/* MBTI Type with description */}
-        {mbtiType && renderInfoCard(
-          <Brain size={20} color="#6366F1" />,
-          'Personality Type',
-          mbtiType,
-          'Your MBTI personality type'
-        )}
-
-        {/* AI Communication Style */}
-        {chatConfig.communicationStyle && renderInfoCard(
-          <MessageCircle size={20} color="#06B6D4" />,
-          'AI Communication',
-          `${chatConfig.communicationStyle} style`,
-          `${chatConfig.emotionalSupport} emotional support level`
-        )}
-      </View>
-    );
-  };
-
-  const renderHappinessProfile = () => {
-    if (!hasAssessment) return null;
-
-    const happinessScores = getHappinessScores();
-    const focusAreas = getFocusAreas();
-    const strengths = getStrengths();
-    const lowestScore = getLowestPERMAScore();
-    const highestScore = getHighestPERMAScore();
-
-    if (!happinessScores) return null;
-
-    return (
-      <View style={screenStyles.contentWithPadding}>
-        <Text style={screenStyles.headerTitle}>Happiness Profile</Text>
-        
-        {/* PERMA Scores with enhanced visualization */}
-        <View style={screenStyles.card}>
-          <View style={styles.infoCardHeader}>
-            <Lightbulb size={20} color="#F59E0B" />
-            <Text style={styles.infoCardTitle}>PERMA Happiness Dimensions</Text>
-          </View>
-          
-          <View style={styles.permaScoresContainer}>
-            {Object.entries(happinessScores).map(([key, value]) => {
-              const isStrength = strengths.includes(key);
-              const isFocusArea = focusAreas.includes(key);
-              const isLowest = lowestScore?.dimension === key;
-              const isHighest = highestScore?.dimension === key;
-              
-              const getDimensionName = (dim: string) => {
-                const names: Record<string, string> = {
-                  positiveEmotion: 'Positive Emotion',
-                  engagement: 'Engagement',
-                  relationships: 'Relationships',
-                  meaning: 'Meaning',
-                  accomplishment: 'Accomplishment'
-                };
-                return names[dim] || dim;
+      <View style={styles.permaChart}>
+        <Text style={styles.sectionTitle}>PERMA Happiness Profile</Text>
+        <View style={styles.permaContainer}>
+          {Object.entries(currentScores).map(([key, value]) => {
+            const height = (value / 10) * 100;
+            const getDimensionName = (dim: string) => {
+              const names: Record<string, string> = {
+                positiveEmotion: 'Positive',
+                engagement: 'Engage',
+                relationships: 'Relations',
+                meaning: 'Meaning',
+                accomplishment: 'Achieve'
               };
-              
-              const getScoreColor = (score: number) => {
-                if (score >= 8) return '#10B981'; // Green
-                if (score >= 6) return '#F59E0B'; // Orange
-                return '#EF4444'; // Red
-              };
-              
-              return (
-                <View key={key} style={styles.permaScoreRow}>
-                  <View style={styles.permaScoreInfo}>
-                    <Text style={[
-                      styles.permaScoreLabel,
-                      { color: getScoreColor(value) }
-                    ]}>
-                      {getDimensionName(key)}
-                    </Text>
-                    <View style={styles.badgeContainer}>
-                      {isHighest && <Text style={styles.highestBadge}>Highest</Text>}
-                      {isLowest && <Text style={styles.lowestBadge}>Needs Focus</Text>}
-                      {isStrength && !isHighest && <Text style={styles.strengthBadge}>Strength</Text>}
-                    </View>
-                  </View>
-                  <View style={styles.scoreContainer}>
-                    <Text style={[
-                      styles.permaScoreValue,
-                      { color: getScoreColor(value) }
-                    ]}>
-                      {value}
-                    </Text>
-                    <Text style={styles.scoreOutOf}>/10</Text>
-                  </View>
+              return names[dim] || dim;
+            };
+            
+            const getColor = (score: number) => {
+              if (score >= 8) return '#10B981';
+              if (score >= 6) return '#F59E0B';
+              return '#EF4444';
+            };
+            
+            return (
+              <View key={key} style={styles.permaItem}>
+                <View style={styles.permaBarContainer}>
+                  <View style={[styles.permaBar, { height: `${height}%`, backgroundColor: getColor(value) }]} />
                 </View>
-              );
-            })}
-          </View>
-          
-          {/* Quick insights */}
-          <View style={styles.insightsContainer}>
-            {lowestScore && (
-              <Text style={styles.insightText}>
-                💡 Focus on improving your {lowestScore.dimension.replace(/([A-Z])/g, ' $1').toLowerCase()}
-              </Text>
-            )}
-            {highestScore && (
-              <Text style={styles.insightText}>
-                ⭐ Your {highestScore.dimension.replace(/([A-Z])/g, ' $1').toLowerCase()} is your strongest area
-              </Text>
-            )}
-          </View>
+                <Text style={styles.permaScore}>{value}</Text>
+                <Text style={styles.permaLabel}>{getDimensionName(key)}</Text>
+              </View>
+            );
+          })}
         </View>
       </View>
     );
   };
 
-  const renderPersonalizationInsights = () => {
-    if (!hasAssessment) return null;
+  const renderInterestsPreview = () => {
+    if (!personalizationProfile?.contentPreferences?.primaryInterests?.length) return null;
 
-    const contentConfig = getContentConfig();
-    const wellnessConfig = getWellnessConfig();
-    const primaryInterests = getPrimaryInterests();
-    const recommendedServices = getRecommendedServices();
-    const wellnessGoals = getWellnessGoals();
-
+    const interests = personalizationProfile.contentPreferences.primaryInterests.slice(0, 4);
+    
     return (
-      <View style={screenStyles.contentWithPadding}>
-        <Text style={screenStyles.headerTitle}>Your Personalization</Text>
-        
-        {/* Primary Interests */}
-        {primaryInterests.length > 0 && renderInfoCard(
-          <Heart size={20} color="#EC4899" />,
-          'Top Interests',
-          primaryInterests.slice(0, 5).join(', '),
-          `Content preferences for personalized recommendations`
-        )}
-
-        {/* Focus Areas for Growth */}
-        {wellnessConfig.focusAreas.length > 0 && renderInfoCard(
-          <TrendingUp size={20} color="#EF4444" />,
-          'Growth Opportunities',
-          wellnessConfig.focusAreas.map(area => 
-            area.replace(/([A-Z])/g, ' $1').toLowerCase()
-          ).join(' & '),
-          'Areas where targeted interventions can help most'
-        )}
-
-        {/* Wellness Goals */}
-        {wellnessGoals.length > 0 && renderInfoCard(
-          <Target size={20} color="#8B5CF6" />,
-          'Wellness Goals',
-          wellnessGoals.slice(0, 3).join(', '),
-          'Personalized outcomes based on your assessment'
-        )}
-
-        {/* Recommended Service Types */}
-        {recommendedServices.length > 0 && renderInfoCard(
-          <Star size={20} color="#10B981" />,
-          'Recommended Services',
-          recommendedServices.slice(0, 4).join(', '),
-          'Service types that match your personality and needs'
-        )}
-
-        {/* Content Focus Areas */}
-        {contentConfig.focusAreaContent && contentConfig.focusAreaContent.length > 0 && renderInfoCard(
-          <Lightbulb size={20} color="#F59E0B" />,
-          'Suggested Content',
-          contentConfig.focusAreaContent.slice(0, 4).join(', '),
-          'Content types to boost your focus areas'
-        )}
-      </View>
-    );
-  };
-
-  const renderAssessmentActions = () => {
-    if (!hasAssessment) return null;
-
-    const updateNeeded = needsUpdate();
-
-    return (
-      <View style={screenStyles.contentWithPadding}>
-        <Text style={screenStyles.headerTitle}>Assessment Actions</Text>
-        
-        {/* Update notification if needed */}
-        {updateNeeded && (
-          <View style={[screenStyles.card, styles.updateCard]}>
-            <View style={styles.infoCardHeader}>
-              <RefreshCw size={20} color="#F59E0B" />
-              <Text style={styles.updateTitle}>Assessment Update Available</Text>
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Heart size={20} color={theme.colors.primary.main} />
+          <Text style={styles.sectionTitle}>Top Interests</Text>
+        </View>
+        <View style={styles.interestsPreview}>
+          {interests.map((interest, index) => (
+            <View key={index} style={styles.interestTag}>
+              <Text style={styles.interestTagText}>{interest}</Text>
             </View>
-            <Text style={styles.updateText}>
-              Your assessment was taken with an older version. Retake it to unlock new features and better personalization.
-            </Text>
-          </View>
-        )}
-
-        {/* Retake Assessment Button */}
-        <TouchableOpacity
-          style={[
-            screenStyles.card, 
-            styles.actionButton,
-            updateNeeded && styles.actionButtonHighlight
-          ]}
-          onPress={handleRetakeAssessment}
-        >
-          <Brain size={20} color={updateNeeded ? '#F59E0B' : theme.colors.primary.main} />
-          <Text style={[
-            theme.typography.button, 
-            { 
-              color: updateNeeded ? '#F59E0B' : theme.colors.primary.main, 
-              fontWeight: '600' 
-            }
-          ]}>
-            {updateNeeded ? 'Update Assessment' : 'Retake Assessment'}
-          </Text>
-        </TouchableOpacity>
+          ))}
+          {personalizationProfile.contentPreferences.primaryInterests.length > 4 && (
+            <View style={[styles.interestTag, styles.moreTag]}>
+              <Text style={styles.moreTagText}>+{personalizationProfile.contentPreferences.primaryInterests.length - 4}</Text>
+            </View>
+          )}
+        </View>
       </View>
     );
   };
 
-  // Update the condition to also check for assessmentLoading
   if (loading && !profileData) {
     return (
       <SafeAreaView style={screenStyles.container}>
@@ -426,269 +239,404 @@ export default function ProfileScreen() {
     );
   }
 
+  const hasPersonalization = !!personalizationProfile;
+  const userName = profileData?.name || 'User';
+  const mbtiType = personalizationProfile?.userCore?.mbtiType;
+  const overallHappiness = personalizationProfile?.computed?.overallHappiness;
+  const totalMessages = personalizationProfile?.activityTracking?.chatMetrics?.totalMessages || 0;
+  const engagementLevel = personalizationProfile?.computed?.engagementLevel || 'Low';
+
   return (
     <SafeAreaView style={screenStyles.container}>
       <ScrollView 
-        style={screenStyles.scrollContainer}
+        style={styles.scrollContainer}
         refreshControl={
-          <RefreshControl refreshing={refreshing || assessmentLoading} onRefresh={onRefresh} />
+          <RefreshControl refreshing={refreshing || personalizationLoading} onRefresh={onRefresh} />
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={[screenStyles.screenHeader, { alignItems: 'center' }]}>
-          <View style={screenStyles.perplexityAvatar}>
-            <User size={48} color={theme.colors.primary.main} />
+        {/* Profile Header */}
+        <View style={styles.profileHeader}>
+          <View style={styles.avatarContainer}>
+            <User size={40} color={theme.colors.white} />
           </View>
-          <Text style={screenStyles.perplexityProfileName}>
-            {getUserName() || profileData?.name || 'User'}
-          </Text>
-          <Text style={screenStyles.perplexityProfileEmail}>
-            {profileData?.email || 'user@email.com'}
-          </Text>
-          {hasAssessment && (
-            <View style={styles.assessmentBadge}>
-              <Text style={styles.assessmentBadgeText}>✓ Assessment Complete</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Basic Info */}
-        <View style={screenStyles.contentWithPadding}>
-          <Text style={screenStyles.headerTitle}>Account Information</Text>
-          {renderInfoCard(
-            <Mail size={20} color={theme.colors.primary.main} />,
-            'Email Address',
-            profileData?.email || 'Not available'
-          )}
-          {renderInfoCard(
-            <Calendar size={20} color={theme.colors.primary.light} />,
-            'Member Since',
-            formatDate(profileData?.createdAt),
-            'Join date'
-          )}
-        </View>
-
-        {/* Assessment-based sections - only show if assessment exists */}
-        {hasAssessment ? (
-          <>
-            {renderPersonalityInsights()}
-            {renderHappinessProfile()}
-            {renderPersonalizationInsights()}
-            {renderAssessmentActions()}
-          </>
-        ) : (
-          /* No Assessment Message */
-          <View style={screenStyles.contentWithPadding}>
-            <View style={[screenStyles.emptyState, { borderWidth: 2, borderColor: theme.colors.border, borderStyle: 'dashed' }]}>
-              <Brain size={32} color={theme.colors.textSecondary} />
-              <Text style={screenStyles.emptyStateTitle}>Assessment Not Completed</Text>
-              <Text style={screenStyles.emptyStateText}>
-                Complete your personality assessment to unlock personalized AI conversations, content recommendations, and wellness insights.
-              </Text>
-              <TouchableOpacity
-                style={[screenStyles.card, styles.actionButton, { marginTop: theme.spacing.lg }]}
-                onPress={() => navigation.navigate('AssessmentIntro')}
-              >
-                <Brain size={20} color={theme.colors.primary.main} />
-                <Text style={[theme.typography.button, { color: theme.colors.primary.main, fontWeight: '600' }]}>
-                  Start Assessment
-                </Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.userInfo}>
+            <Text style={styles.userName}>{userName}</Text>
+            <Text style={styles.userEmail}>{profileData?.email}</Text>
+            {mbtiType && (
+              <View style={styles.mbtiTag}>
+                <Brain size={14} color={theme.colors.primary.main} />
+                <Text style={styles.mbtiText}>{mbtiType}</Text>
+              </View>
+            )}
           </View>
-        )}
-
-        {/* Sign Out Button */}
-        <View style={screenStyles.contentWithPadding}>
-          <TouchableOpacity style={[screenStyles.card, styles.signOutButton]} onPress={handleSignOut}>
-            <LogOut size={20} color="#EF4444" />
-            <Text style={[theme.typography.button, { color: '#EF4444', fontWeight: '600' }]}>Sign Out</Text>
+          <TouchableOpacity style={styles.settingsButton} onPress={() => {}}>
+            <Settings size={20} color={theme.colors.textSecondary} />
           </TouchableOpacity>
         </View>
 
-        <View style={screenStyles.contentWithPadding}>
-          <Text style={[theme.typography.caption, { color: theme.colors.textSecondary, textAlign: 'center' }]}>
-            Last updated: {formatDate(profileData?.updatedAt || profileData?.createdAt)}
-          </Text>
+        {hasPersonalization ? (
+          <>
+            {/* Stats Cards */}
+            <View style={styles.statsContainer}>
+              {renderStatCard(
+                <Heart size={20} color="#EC4899" />,
+                'Happiness',
+                overallHappiness ? `${overallHappiness.toFixed(1)}/10` : 'N/A',
+                '#EC4899'
+              )}
+              {renderStatCard(
+                <MessageCircle size={20} color="#06B6D4" />,
+                'Messages',
+                totalMessages.toString(),
+                '#06B6D4'
+              )}
+            </View>
+
+            <View style={styles.statsContainer}>
+              {renderStatCard(
+                <Activity size={20} color="#8B5CF6" />,
+                'Engagement',
+                engagementLevel,
+                '#8B5CF6'
+              )}
+              {renderStatCard(
+                <Calendar size={20} color="#10B981" />,
+                'Member Since',
+                formatDate(profileData?.createdAt),
+                '#10B981'
+              )}
+            </View>
+
+            {/* PERMA Chart */}
+            {renderPermaChart()}
+
+            {/* Interests */}
+            {renderInterestsPreview()}
+
+            {/* Communication Style */}
+            {personalizationProfile?.userCore?.communicationStyle && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <MessageCircle size={20} color={theme.colors.primary.main} />
+                  <Text style={styles.sectionTitle}>AI Chat Style</Text>
+                </View>
+                <View style={styles.communicationCard}>
+                  <Text style={styles.communicationStyle}>
+                    {personalizationProfile.userCore.communicationStyle} • {personalizationProfile.userCore.emotionalSupport}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Quick Actions */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Quick Actions</Text>
+              <View style={styles.actionsContainer}>
+                <TouchableOpacity style={styles.actionCard} onPress={handleRetakeAssessment}>
+                  <Brain size={24} color={theme.colors.primary.main} />
+                  <Text style={styles.actionText}>Update Assessment</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity style={styles.actionCard} onPress={() => {}}>
+                  <BarChart3 size={24} color="#10B981" />
+                  <Text style={styles.actionText}>View Analytics</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+          </>
+        ) : (
+          /* No Personalization State */
+          <View style={styles.emptyState}>
+            <Brain size={48} color={theme.colors.textSecondary} />
+            <Text style={styles.emptyStateTitle}>Complete Your Profile</Text>
+            <Text style={styles.emptyStateText}>
+              Take our personality assessment to unlock personalized AI conversations and insights.
+            </Text>
+            <TouchableOpacity style={styles.startButton} onPress={handleRetakeAssessment}>
+              <Text style={styles.startButtonText}>Start Assessment</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Sign Out */}
+        <View style={styles.section}>
+          <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
+            <LogOut size={20} color="#EF4444" />
+            <Text style={styles.signOutText}>Sign Out</Text>
+          </TouchableOpacity>
         </View>
+
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  infoCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: theme.spacing.sm,
-  },
-  infoCardTitle: {
-    ...theme.typography.body,
-    color: theme.colors.textSecondary,
-    marginLeft: theme.spacing.sm,
-    fontWeight: '500',
-  },
-  infoCardValue: {
-    ...theme.typography.h4,
-    color: theme.colors.text,
-    marginBottom: theme.spacing.xs,
-    textTransform: 'capitalize',
-  },
-  infoCardSubtitle: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-  },
-  permaScoresContainer: {
-    gap: theme.spacing.sm,
-  },
-  permaScoreRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: theme.spacing.xs,
-  },
-  permaScoreInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  scrollContainer: {
     flex: 1,
-    gap: theme.spacing.sm,
+    backgroundColor: theme.colors.background,
   },
-  permaScoreLabel: {
-    ...theme.typography.body,
-    color: theme.colors.text,
-    fontWeight: '500',
-    textTransform: 'capitalize',
+  profileHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: theme.spacing.lg,
+    backgroundColor: theme.colors.white,
+    marginBottom: theme.spacing.md,
   },
-  strengthLabel: {
-    color: '#10B981',
+  avatarContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: theme.colors.primary.main,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  focusLabel: {
-    color: '#EF4444',
+  userInfo: {
+    flex: 1,
+    marginLeft: theme.spacing.md,
   },
-  permaScoreValue: {
-    ...theme.typography.h5,
+  userName: {
+    ...theme.typography.h3,
     color: theme.colors.text,
     fontWeight: 'bold',
   },
-  strengthValue: {
-    color: '#10B981',
-  },
-  focusValue: {
-    color: '#EF4444',
-  },
-  strengthBadge: {
-    ...theme.typography.caption,
-    color: '#10B981',
-    backgroundColor: '#10B981' + '20',
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 2,
-    borderRadius: theme.borderRadius.sm,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  focusBadge: {
-    ...theme.typography.caption,
-    color: '#EF4444',
-    backgroundColor: '#EF4444' + '20',
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 2,
-    borderRadius: theme.borderRadius.sm,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  badgeContainer: {
-    flexDirection: 'row',
-    gap: theme.spacing.xs,
-  },
-  scoreContainer: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-  },
-  scoreOutOf: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    marginLeft: 2,
-  },
-  highestBadge: {
-    ...theme.typography.caption,
-    color: '#10B981',
-    backgroundColor: '#10B981' + '20',
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 2,
-    borderRadius: theme.borderRadius.sm,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  lowestBadge: {
-    ...theme.typography.caption,
-    color: '#EF4444',
-    backgroundColor: '#EF4444' + '20',
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: 2,
-    borderRadius: theme.borderRadius.sm,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  insightsContainer: {
-    marginTop: theme.spacing.md,
-    padding: theme.spacing.sm,
-    backgroundColor: theme.colors.gray[50],
-    borderRadius: theme.borderRadius.md,
-    gap: theme.spacing.xs,
-  },
-  insightText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    fontStyle: 'italic',
-  },
-  assessmentBadge: {
-    backgroundColor: '#10B981' + '20',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
-    borderRadius: theme.borderRadius.xl,
-    marginTop: theme.spacing.sm,
-  },
-  assessmentBadgeText: {
-    ...theme.typography.caption,
-    color: '#10B981',
-    fontWeight: '600',
-  },
-  updateCard: {
-    borderWidth: 2,
-    borderColor: '#F59E0B',
-    backgroundColor: '#F59E0B' + '10',
-  },
-  updateTitle: {
+  userEmail: {
     ...theme.typography.body,
-    color: '#F59E0B',
-    marginLeft: theme.spacing.sm,
-    fontWeight: '600',
-  },
-  updateText: {
-    ...theme.typography.body,
-    color: '#F59E0B',
+    color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
   },
-  actionButton: {
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: theme.colors.primary.main,
-    gap: theme.spacing.sm,
-    marginTop: theme.spacing.md,
+  mbtiTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary.light + '20',
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+    borderRadius: theme.borderRadius.md,
+    alignSelf: 'flex-start',
+    marginTop: theme.spacing.xs,
+    gap: theme.spacing.xs,
   },
-  actionButtonHighlight: {
-    borderColor: '#F59E0B',
-    backgroundColor: '#F59E0B' + '10',
+  mbtiText: {
+    ...theme.typography.caption,
+    color: theme.colors.primary.main,
+    fontWeight: '600',
+  },
+  settingsButton: {
+    padding: theme.spacing.sm,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: theme.spacing.lg,
+    gap: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+  },
+  statCard: {
+    backgroundColor: theme.colors.white,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  statIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  statValue: {
+    ...theme.typography.h3,
+    color: theme.colors.text,
+    fontWeight: 'bold',
+    marginBottom: theme.spacing.xs,
+  },
+  statTitle: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+  },
+  section: {
+    backgroundColor: theme.colors.white,
+    marginHorizontal: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+    gap: theme.spacing.sm,
+  },
+  sectionTitle: {
+    ...theme.typography.h4,
+    color: theme.colors.text,
+    fontWeight: '600',
+  },
+  permaChart: {
+    backgroundColor: theme.colors.white,
+    marginHorizontal: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  permaContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    height: 120,
+  },
+  permaItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  permaBarContainer: {
+    height: 80,
+    width: 24,
+    backgroundColor: theme.colors.gray[100],
+    borderRadius: 12,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  permaBar: {
+    width: '100%',
+    borderRadius: 12,
+    minHeight: 8,
+  },
+  permaScore: {
+    ...theme.typography.caption,
+    color: theme.colors.text,
+    fontWeight: 'bold',
+    marginTop: theme.spacing.xs,
+  },
+  permaLabel: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    fontSize: 10,
+    textAlign: 'center',
+  },
+  interestsPreview: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.spacing.sm,
+  },
+  interestTag: {
+    backgroundColor: theme.colors.primary.light + '20',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.borderRadius.xl,
+  },
+  interestTagText: {
+    ...theme.typography.caption,
+    color: theme.colors.primary.main,
+    fontWeight: '500',
+  },
+  moreTag: {
+    backgroundColor: theme.colors.gray[100],
+  },
+  moreTagText: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    fontWeight: '500',
+  },
+  communicationCard: {
+    backgroundColor: theme.colors.gray[50],
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+  },
+  communicationStyle: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    textAlign: 'center',
+    textTransform: 'capitalize',
+  },
+  actionsContainer: {
+    flexDirection: 'row',
+    gap: theme.spacing.md,
+  },
+  actionCard: {
+    flex: 1,
+    backgroundColor: theme.colors.gray[50],
+    padding: theme.spacing.lg,
+    borderRadius: theme.borderRadius.lg,
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  actionText: {
+    ...theme.typography.caption,
+    color: theme.colors.text,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  emptyState: {
+    backgroundColor: theme.colors.white,
+    marginHorizontal: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.xl,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  emptyStateTitle: {
+    ...theme.typography.h3,
+    color: theme.colors.text,
+    fontWeight: 'bold',
+    marginTop: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+  },
+  emptyStateText: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: theme.spacing.lg,
+  },
+  startButton: {
+    backgroundColor: theme.colors.primary.main,
+    paddingHorizontal: theme.spacing.xl,
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.borderRadius.lg,
+  },
+  startButtonText: {
+    ...theme.typography.button,
+    color: theme.colors.white,
+    fontWeight: '600',
   },
   signOutButton: {
-    flexDirection: 'row', 
-    alignItems: 'center', 
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.lg,
     gap: theme.spacing.sm,
+  },
+  signOutText: {
+    ...theme.typography.button,
+    color: '#EF4444',
+    fontWeight: '600',
   },
 });

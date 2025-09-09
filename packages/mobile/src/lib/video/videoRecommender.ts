@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { PersonalizationProfile } from '../assessment/analyzer';
+import type { UnifiedPersonalizationProfile } from '../personalization/types';
 
 export interface YouTubeVideo {
   videoId: string;
@@ -7,11 +7,13 @@ export interface YouTubeVideo {
   snippet: string;
   thumbnail: string;
   url: string;
+  embedUrl: string; // NEW: Direct embed URL for in-app playback
   channelTitle?: string;
   publishedAt?: string;
   viewCount?: string;
   likeCount?: string;
   duration?: string;
+  isEmbeddable: boolean; // NEW: Ensure video can be embedded
 }
 
 export interface VideoSection {
@@ -20,271 +22,330 @@ export interface VideoSection {
   videos: YouTubeVideo[];
   permaDimension: string;
   priority: number;
+  generatedAt?: string;
+  searchQueries?: string[];
 }
 
-interface TopicSearchQuery {
-  topic: string;
-  permaDimension: string;
-  searchTerms: string[];
-  priority: number;
-}
-
-// Extract personalized topics from user profile
-function extractPersonalizedTopics(personalization: PersonalizationProfile): TopicSearchQuery[] {
-  const topics: TopicSearchQuery[] = [];
-  
-  // 1. Get focus areas (areas needing improvement) - highest priority
-  personalization.wellnessProfile.focusAreas.forEach((dimension, index) => {
-    const permaTopics = personalization.contentPreferences.permaMapping[dimension as keyof typeof personalization.contentPreferences.permaMapping] || [];
-    if (permaTopics.length > 0) {
-      topics.push({
-        topic: `${dimension} boost`,
-        permaDimension: dimension,
-        searchTerms: generateSearchTermsForDimension(dimension, permaTopics.slice(0, 3)),
-        priority: 10 - index // Higher priority for first focus areas
-      });
-    }
-  });
-
-  // 2. Get primary interests - medium-high priority
-  personalization.contentPreferences.primaryInterests.slice(0, 4).forEach((interest, index) => {
-    const dimension = findBestPermaDimension(interest, personalization.contentPreferences.permaMapping);
-    topics.push({
-      topic: interest,
-      permaDimension: dimension,
-      searchTerms: generateSearchTermsForInterest(interest),
-      priority: 8 - index
-    });
-  });
-
-  // 3. Get emerging interests from dynamic personalization - medium priority
-  const contentPrefs = personalization.contentPreferences as any;
-  if (contentPrefs.dynamicInterests?.emerging) {
-    contentPrefs.dynamicInterests.emerging.slice(0, 2).forEach((interest: string, index: number) => {
-      const dimension = findBestPermaDimension(interest, personalization.contentPreferences.permaMapping);
-      topics.push({
-        topic: `trending: ${interest}`,
-        permaDimension: dimension,
-        searchTerms: generateSearchTermsForInterest(interest),
-        priority: 6 - index
-      });
-    });
-  }
-
-  // 4. Get MBTI-specific recommendations - lower priority
-  const mbtiTopics = generateMBTITopics(personalization.chatPersona.mbtiType);
-  mbtiTopics.forEach((mbtiTopic, index) => {
-    topics.push({
-      topic: `for ${personalization.chatPersona.mbtiType}`,
-      permaDimension: mbtiTopic.dimension,
-      searchTerms: mbtiTopic.searchTerms,
-      priority: 4 - index
-    });
-  });
-
-  return topics.sort((a, b) => b.priority - a.priority).slice(0, 6); // Top 6 topics
-}
-
-// Generate search terms for PERMA dimensions
-function generateSearchTermsForDimension(dimension: string, userTopics: string[]): string[] {
-  const baseTerms: Record<string, string[]> = {
-    positiveEmotion: ['happiness', 'joy', 'fun', 'laughter', 'uplifting', 'feel good'],
-    engagement: ['motivation', 'passion', 'flow state', 'skills', 'learning', 'creativity'],
-    relationships: ['friendship', 'love', 'connection', 'social', 'community', 'family'],
-    meaning: ['purpose', 'values', 'spirituality', 'growth', 'wisdom', 'fulfillment'],
-    accomplishment: ['success', 'achievement', 'goals', 'progress', 'confidence', 'mastery']
-  };
-
-  const dimensionTerms = baseTerms[dimension as keyof typeof baseTerms] || ['wellbeing', 'happiness'];
-  return [...dimensionTerms.slice(0, 3), ...userTopics.slice(0, 2)];
-}
-
-// Generate search terms for specific interests
-function generateSearchTermsForInterest(interest: string): string[] {
-  const interestMap: Record<string, string[]> = {
-    'music': ['music therapy', 'relaxing music', 'mood boosting songs'],
-    'nature': ['nature sounds', 'outdoor adventure', 'mindfulness in nature'],
-    'cooking': ['cooking tutorials', 'healthy recipes', 'comfort food'],
-    'exercise': ['workout motivation', 'fitness journey', 'healthy lifestyle'],
-    'art': ['art therapy', 'creative inspiration', 'artistic expression'],
-    'reading': ['book recommendations', 'reading motivation', 'literary inspiration'],
-    'gaming': ['positive gaming', 'game reviews', 'gaming community'],
-    'technology': ['tech innovation', 'future technology', 'digital wellbeing'],
-    'family': ['family activities', 'parenting tips', 'family bonding'],
-    'creativity': ['creative projects', 'inspiration', 'artistic tutorials']
-  };
-
-  return interestMap[interest.toLowerCase()] || [interest, `${interest} motivation`, `${interest} inspiration`];
-}
-
-// Find best PERMA dimension for an interest
-function findBestPermaDimension(interest: string, permaMapping: PersonalizationProfile['contentPreferences']['permaMapping']): string {
-  const permaDimensions = Object.keys(permaMapping) as Array<keyof typeof permaMapping>;
-  
-  for (const dimension of permaDimensions) {
-    const topics = permaMapping[dimension];
-    if (topics.some(topic => topic.toLowerCase().includes(interest.toLowerCase()))) {
-      return dimension;
-    }
-  }
-  return 'positiveEmotion'; // Default fallback
-}
-
-// Generate MBTI-specific topics
-function generateMBTITopics(mbtiType: string): Array<{dimension: string, searchTerms: string[]}> {
-  const mbtiMap: Record<string, Array<{dimension: string, searchTerms: string[]}>> = {
-    'E': [{ dimension: 'relationships', searchTerms: ['social activities', 'group discussions', 'networking'] }],
-    'I': [{ dimension: 'meaning', searchTerms: ['self reflection', 'introspection', 'personal growth'] }],
-    'N': [{ dimension: 'engagement', searchTerms: ['future possibilities', 'innovation', 'creative thinking'] }],
-    'S': [{ dimension: 'accomplishment', searchTerms: ['practical skills', 'hands on learning', 'real world applications'] }],
-    'T': [{ dimension: 'engagement', searchTerms: ['logical analysis', 'problem solving', 'systematic thinking'] }],
-    'F': [{ dimension: 'relationships', searchTerms: ['emotional intelligence', 'empathy', 'human connection'] }],
-    'J': [{ dimension: 'accomplishment', searchTerms: ['goal setting', 'organization', 'planning'] }],
-    'P': [{ dimension: 'positiveEmotion', searchTerms: ['spontaneity', 'flexibility', 'exploration'] }]
-  };
-
-  const topics: Array<{dimension: string, searchTerms: string[]}> = [];
-  for (const letter of mbtiType) {
-    if (mbtiMap[letter]) {
-      topics.push(...mbtiMap[letter]);
-    }
-  }
-  return topics.slice(0, 2); // Limit to 2 MBTI-based topics
-}
-
-// Enhanced YouTube API search with personalization
+// Enhanced YouTube API search with strict embeddable filtering
 export async function searchYouTubeVideos(
   searchTerms: string[], 
   maxResults: number = 8,
   additionalFilters?: string
 ): Promise<YouTubeVideo[]> {
   try {
-    console.log('Debug - Searching YouTube with terms:', searchTerms);
-    console.log('Debug - YouTube API Key exists:', !!process.env.EXPO_PUBLIC_YOUTUBE_API_KEY);
+    console.log('🎬 [VideoRecommender] Searching YouTube with terms:', searchTerms);
+    
+    const apiKey = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
+    if (!apiKey) {
+      console.error('❌ [VideoRecommender] YouTube API key not found');
+      return [];
+    }
     
     const query = searchTerms.join(' ') + (additionalFilters ? ` ${additionalFilters}` : '');
     const publishedAfter = new Date();
-    publishedAfter.setDate(publishedAfter.getDate() - 60); // Last 60 days for fresher content
+    publishedAfter.setDate(publishedAfter.getDate() - 90); // Last 90 days for better content
 
+    // Enhanced search parameters for embeddable videos
     const searchResponse = await axios.get('https://www.googleapis.com/youtube/v3/search', {
       params: {
-        key: process.env.EXPO_PUBLIC_YOUTUBE_API_KEY,
+        key: apiKey,
         q: query,
         part: 'snippet',
         type: 'video',
-        maxResults,
-        videoEmbeddable: true,
-        videoDefinition: 'high',
+        maxResults: Math.min(maxResults * 2, 50), // Get more results to filter for embeddable
+        videoEmbeddable: 'true', // Only embeddable videos
+        videoDefinition: 'any', // Include both HD and SD
+        videoSyndicated: 'true', // Only syndicated videos
         publishedAfter: publishedAfter.toISOString(),
         relevanceLanguage: 'en',
         safeSearch: 'moderate',
-        order: 'relevance'
-      }
+        order: 'relevance',
+        regionCode: 'US' // Ensure availability in US
+      },
+      timeout: 10000 // 10 second timeout
     });
 
-    console.log('Debug - YouTube search response:', searchResponse.data?.items?.length || 0, 'videos');
+    console.log('📺 [VideoRecommender] YouTube search response:', searchResponse.data?.items?.length || 0, 'videos');
 
     const videoItems = searchResponse.data.items || [];
     if (videoItems.length === 0) return [];
 
     const videoIds = videoItems.map((item: any) => item.id.videoId).join(',');
 
-    // Get additional video details
+    // Get detailed video information including embed status
     const detailsResponse = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
       params: {
-        key: process.env.EXPO_PUBLIC_YOUTUBE_API_KEY,
+        key: apiKey,
         id: videoIds,
-        part: 'snippet,statistics,contentDetails'
-      }
+        part: 'snippet,statistics,contentDetails,status',
+        maxResults: 50
+      },
+      timeout: 10000
     });
 
-    const videos = detailsResponse.data.items.map((item: any): YouTubeVideo => ({
-      videoId: item.id,
-      title: item.snippet.title,
-      snippet: item.snippet.description,
-      thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url,
-      url: `https://www.youtube.com/watch?v=${item.id}`,
-      channelTitle: item.snippet.channelTitle,
-      publishedAt: item.snippet.publishedAt,
-      viewCount: item.statistics?.viewCount,
-      likeCount: item.statistics?.likeCount,
-      duration: item.contentDetails?.duration
-    }));
+    const videos = detailsResponse.data.items
+      .filter((item: any) => {
+        // Strict filtering for embeddable videos
+        return item.status?.embeddable === true && 
+               item.status?.privacyStatus === 'public' &&
+               !item.contentDetails?.regionRestriction?.blocked?.includes('US');
+      })
+      .map((item: any): YouTubeVideo => ({
+        videoId: item.id,
+        title: item.snippet.title,
+        snippet: item.snippet.description?.substring(0, 200) + '...' || 'No description available',
+        thumbnail: item.snippet.thumbnails?.high?.url || 
+                   item.snippet.thumbnails?.medium?.url || 
+                   item.snippet.thumbnails?.default?.url,
+        url: `https://www.youtube.com/watch?v=${item.id}`,
+        embedUrl: `https://www.youtube.com/embed/${item.id}?rel=0&modestbranding=1&playsinline=1`,
+        channelTitle: item.snippet.channelTitle,
+        publishedAt: item.snippet.publishedAt,
+        viewCount: item.statistics?.viewCount,
+        likeCount: item.statistics?.likeCount,
+        duration: item.contentDetails?.duration,
+        isEmbeddable: true
+      }))
+      .slice(0, maxResults); // Limit to requested number
 
-    console.log('Debug - Processed videos:', videos.length);
+    console.log('✅ [VideoRecommender] Processed embeddable videos:', videos.length);
     return videos;
 
   } catch (error) {
-    console.error('Error searching YouTube videos:', error);
+    console.error('❌ [VideoRecommender] Error searching YouTube videos:', error);
     if (axios.isAxiosError(error)) {
-      console.error('YouTube API Error Details:', error.response?.data);
+      console.error('📋 [VideoRecommender] YouTube API Error Details:', {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message
+      });
     }
     return [];
   }
 }
 
-// Refine topics using OpenAI (optional enhancement)
-async function refineTopicsWithAI(
-  topics: TopicSearchQuery[], 
-  userContext: { mbti: string, focusAreas: string[], interests: string[] }
-): Promise<TopicSearchQuery[]> {
-  try {
-    // This is optional - you can implement OpenAI integration here
-    // For now, return topics as-is
-    return topics;
-  } catch (error) {
-    console.error('Error refining topics with AI:', error);
-    return topics;
-  }
-}
-
-// Main function to get personalized video sections
+// UPDATED: Use pre-generated search queries from topicSearchQueries
 export async function getPersonalizedVideoSections(
-  personalization: PersonalizationProfile
+  personalization: UnifiedPersonalizationProfile,
+  useFirebase: any
 ): Promise<VideoSection[]> {
   try {
-    const topics = extractPersonalizedTopics(personalization);
-    const sections: VideoSection[] = [];
-
-    // Optionally refine topics with AI
-    const refinedTopics = await refineTopicsWithAI(topics, {
-      mbti: personalization.chatPersona.mbtiType,
-      focusAreas: personalization.wellnessProfile.focusAreas,
-      interests: personalization.contentPreferences.primaryInterests
+    console.log('🎯 [VideoRecommender] Getting personalized video sections');
+    console.log('📊 [VideoRecommender] Profile info:', {
+      userId: personalization.userId,
+      topicQueriesCount: Object.keys(personalization.contentPreferences.topicSearchQueries || {}).length,
+      primaryInterestsCount: personalization.contentPreferences.primaryInterests.length
     });
+    
+    const sections: VideoSection[] = [];
+    
+    // Use existing topicSearchQueries from the personalization profile
+    const topicSearchQueries = personalization.contentPreferences.topicSearchQueries || {};
+    
+    if (Object.keys(topicSearchQueries).length === 0) {
+      console.log('⚠️ [VideoRecommender] No topic search queries found, using fallback');
+      return await createFallbackVideoSections(personalization);
+    }
 
-    // Fetch videos for each topic
-    for (const topic of refinedTopics) {
-      const videos = await searchYouTubeVideos(
-        topic.searchTerms,
-        topic.priority >= 8 ? 10 : 6, // More videos for high-priority topics
-        'positive motivation wellbeing' // Additional filter for positive content
-      );
+    // Convert topicSearchQueries to video sections with proper type safety
+    const topicEntries = Object.entries(topicSearchQueries)
+      .sort(([,a], [,b]) => (b.priority || 0) - (a.priority || 0)) // Fix: Handle undefined priority
+      .slice(0, 6); // Limit to top 6 topics for better performance
 
-      if (videos.length > 0) {
-        sections.push({
-          topicName: topic.topic,
-          description: generateSectionDescription(topic.topic, topic.permaDimension),
-          videos,
-          permaDimension: topic.permaDimension,
-          priority: topic.priority
-        });
+    console.log('📝 [VideoRecommender] Processing topics:', topicEntries.map(([name]) => name));
+
+    // Process topics in batches to avoid rate limiting
+    for (const [topicName, topicData] of topicEntries) {
+      try {
+        console.log(`🔍 [VideoRecommender] Fetching videos for: "${topicName}"`);
+        console.log(`📋 [VideoRecommender] Using queries:`, topicData.queries);
+        
+        // Ensure queries exist and are valid
+        if (!topicData.queries || !Array.isArray(topicData.queries) || topicData.queries.length === 0) {
+          console.warn(`⚠️ [VideoRecommender] No valid queries for topic: "${topicName}"`);
+          continue;
+        }
+        
+        const videos = await searchYouTubeVideos(
+          topicData.queries,
+          (topicData.priority || 5) >= 8 ? 8 : 6, // Fix: Handle undefined priority
+          'tutorial motivation positive' // Additional filter for quality content
+        );
+
+        if (videos.length > 0) {
+          const section: VideoSection = {
+            topicName: formatTopicName(topicName),
+            description: generateSectionDescription(topicName, topicData.permaDimension || 'engagement'), // Fix: Handle undefined permaDimension
+            videos,
+            permaDimension: topicData.permaDimension || 'engagement', // Fix: Handle undefined permaDimension
+            priority: topicData.priority || 5, // Fix: Handle undefined priority
+            generatedAt: new Date().toISOString(),
+            searchQueries: topicData.queries
+          };
+          
+          sections.push(section);
+          console.log(`✅ [VideoRecommender] Created section "${section.topicName}" with ${videos.length} embeddable videos`);
+        } else {
+          console.log(`⚠️ [VideoRecommender] No embeddable videos found for topic: "${topicName}"`);
+        }
+        
+        // Add small delay between requests to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+      } catch (error) {
+        console.error(`❌ [VideoRecommender] Error fetching videos for topic ${topicName}:`, error);
       }
     }
 
-    return sections.sort((a, b) => b.priority - a.priority);
+    console.log(`🎉 [VideoRecommender] Created ${sections.length} video sections`);
+    return sections;
 
   } catch (error) {
-    console.error('Error getting personalized video sections:', error);
-    return [];
+    console.error('❌ [VideoRecommender] Error getting personalized video sections:', error);
+    return await createFallbackVideoSections(personalization);
   }
+}
+
+// UPDATED: Fallback that doesn't regenerate topics, uses basic interest mapping
+async function createFallbackVideoSections(
+  personalization: UnifiedPersonalizationProfile
+): Promise<VideoSection[]> {
+  console.log('🔄 [VideoRecommender] Creating fallback video sections');
+  
+  const sections: VideoSection[] = [];
+  
+  try {
+    // 1. Focus areas get priority (areas needing improvement)
+    for (const [index, focusArea] of personalization.wellnessProfile.focusAreas.entries()) {
+      const focusQueries = getFallbackQueriesForDimension(focusArea);
+      if (focusQueries) {
+        const videos = await searchYouTubeVideos(focusQueries, 6);
+        if (videos.length > 0) {
+          sections.push({
+            topicName: `${formatDimensionName(focusArea)} Boost`,
+            description: generateSectionDescription(`${focusArea}_boost`, focusArea),
+            videos,
+            permaDimension: focusArea,
+            priority: 10 - index,
+            generatedAt: new Date().toISOString(),
+            searchQueries: focusQueries
+          });
+        }
+      }
+      
+      // Add delay between requests
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    
+    // 2. Primary interests (engagement)
+    for (const [index, interest] of personalization.contentPreferences.primaryInterests.slice(0, 2).entries()) {
+      const interestQueries = [
+        `${interest} beginner tutorial`,
+        `${interest} motivation tips`,
+        `${interest} guide positive`
+      ];
+      
+      const videos = await searchYouTubeVideos(interestQueries, 5);
+      if (videos.length > 0) {
+        sections.push({
+          topicName: `${interest} Learning`,
+          description: generateSectionDescription(interest, 'engagement'),
+          videos,
+          permaDimension: 'engagement',
+          priority: 6 - index,
+          generatedAt: new Date().toISOString(),
+          searchQueries: interestQueries
+        });
+      }
+      
+      // Add delay between requests
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    
+    // 3. General wellbeing if we don't have enough sections
+    if (sections.length < 2) {
+      const wellbeingQueries = ['daily happiness habits positive', 'motivation inspiration success'];
+      const videos = await searchYouTubeVideos(wellbeingQueries, 6);
+      if (videos.length > 0) {
+        sections.push({
+          topicName: 'General Wellbeing',
+          description: 'Content to support your overall happiness and wellbeing 🌟',
+          videos,
+          permaDimension: 'positiveEmotion',
+          priority: 5,
+          generatedAt: new Date().toISOString(),
+          searchQueries: wellbeingQueries
+        });
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ [VideoRecommender] Error creating fallback sections:', error);
+  }
+  
+  console.log(`✅ [VideoRecommender] Created ${sections.length} fallback sections`);
+  return sections.sort((a, b) => b.priority - a.priority);
+}
+
+// Helper: Get basic search queries for PERMA dimensions
+function getFallbackQueriesForDimension(dimension: string): string[] | null {
+  const dimensionQueries: Record<string, string[]> = {
+    positiveEmotion: [
+      'daily happiness habits positive',
+      'mood boosting meditation', 
+      'positive psychology motivation'
+    ],
+    engagement: [
+      'finding passion purpose tutorial',
+      'flow state productivity tips',
+      'engaging hobby creative'
+    ],
+    relationships: [
+      'building relationships communication',
+      'social connection friendship tips', 
+      'relationship advice positive'
+    ],
+    meaning: [
+      'finding life purpose meaning',
+      'meaningful living philosophy',
+      'values clarification personal growth'
+    ],
+    accomplishment: [
+      'goal achievement success strategies',
+      'productivity habits successful',
+      'confidence building motivation'
+    ]
+  };
+  
+  return dimensionQueries[dimension] || null;
+}
+
+// Helper: Format topic names for display
+function formatTopicName(topicName: string): string {
+  return topicName
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+// Helper: Format dimension names for display
+function formatDimensionName(dimension: string): string {
+  const dimensionNames: Record<string, string> = {
+    positiveEmotion: 'Mood',
+    engagement: 'Engagement', 
+    relationships: 'Connection',
+    meaning: 'Purpose',
+    accomplishment: 'Achievement'
+  };
+  
+  return dimensionNames[dimension] || dimension;
 }
 
 // Generate friendly section descriptions
 export function generateSectionDescription(topicName: string, permaDimension: string): string {
   const descriptions: Record<string, string> = {
     positiveEmotion: 'Videos to brighten your day and boost your mood 🌟',
-    engagement: 'Content to spark your curiosity and passion 🔥',
+    engagement: 'Content to spark your curiosity and passion 🔥', 
     relationships: 'Stories about connection and community 💝',
     meaning: 'Inspiring content for purpose and growth 🌱',
     accomplishment: 'Motivational videos for your goals and success 🎯'
@@ -292,20 +353,26 @@ export function generateSectionDescription(topicName: string, permaDimension: st
 
   const baseDescription = descriptions[permaDimension] || 'Curated content just for you ✨';
   
-  if (topicName.includes('boost')) {
-    return `${baseDescription} - Focused on ${permaDimension}`;
+  if (topicName.includes('boost') || topicName.includes('Boost')) {
+    return `${baseDescription} - Focused on improving your ${formatDimensionName(permaDimension).toLowerCase()}`;
   }
-  if (topicName.includes('trending')) {
-    return `${baseDescription} - Based on your growing interests`;
+  if (topicName.includes('learning') || topicName.includes('Learning')) {
+    return `${baseDescription} - Learn and grow in your interests`;
   }
-  if (topicName.includes('for ')) {
-    return `${baseDescription} - Tailored for your personality`;
+  if (topicName.includes('focus')) {
+    return `${baseDescription} - Targeted content for your focus area`;
   }
   
-  return `${baseDescription} - About ${topicName}`;
+  return `${baseDescription} - Personalized for ${topicName.toLowerCase()}`;
 }
 
-// Legacy function for backward compatibility
+// REMOVED: Legacy functions that are no longer needed
+// - generatePersonalizedSearchTopics (now handled by topicGenerator)
+// - profileToTopicRequest (now in topicGenerator)
+// - refreshTopicsInBackground (topics are generated once by topicGenerator)
+// - createBasicFallbackTopics (replaced with createFallbackVideoSections)
+
+// Legacy function for backward compatibility (if needed elsewhere)
 export async function getPersonalizedYouTubeVideos({
   mbti,
   perma,
@@ -315,5 +382,6 @@ export async function getPersonalizedYouTubeVideos({
   perma?: any;
   interests?: string[];
 }): Promise<YouTubeVideo[]> {
+  console.log('⚠️ [VideoRecommender] Legacy function called - use getPersonalizedVideoSections instead');
   return [];
 }

@@ -30,6 +30,7 @@
     "react-native-screens": "~4.4.0",
     "react-native-svg": "15.8.0",
     "react-native-video": "^6.0.0",
+    "react-native-webview": "^13.16.0",
     "sentiment": "5.0.2"
   },
   "devDependencies": {

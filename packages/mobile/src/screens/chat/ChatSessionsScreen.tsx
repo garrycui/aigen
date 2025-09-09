@@ -5,6 +5,7 @@ import { theme } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebase } from '../../context/FirebaseContext';
 import { ChatSession, ChatService } from '../../lib/chat/chatService';
+import { useUnifiedPersonalization } from '../../hooks/useUnifiedPersonalization';
 
 interface ChatSessionsScreenProps {
   navigation: any;
@@ -23,6 +24,7 @@ export default function ChatSessionsScreen({ navigation }: ChatSessionsScreenPro
   const { user } = useAuth();
   const { getChatSessions, updateChatSession, getChatMessages } = useFirebase();
   const chatService = ChatService.getInstance();
+  const { profile: personalization, loading: personalizationLoading } = useUnifiedPersonalization(user?.id || '');
   
   const [sessions, setSessions] = useState<ExtendedChatSession[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -73,7 +75,7 @@ export default function ChatSessionsScreen({ navigation }: ChatSessionsScreenPro
               ...session,
               theme,
               summary,
-              messageCount, // Use actual message count from database
+              messageCount: messageCount, // Use actual message count from database
               archived: session.archived || false
             };
           })
@@ -289,12 +291,12 @@ export default function ChatSessionsScreen({ navigation }: ChatSessionsScreenPro
       )}
 
       <View style={styles.sessionStats}>
-        <View style={styles.statItem}>
+        <View style={styles.sessionStatItem}>
           <MessageCircle size={14} color={theme.colors.gray[400]} />
           <Text style={styles.statText}>{item.messageCount || 0} messages</Text>
         </View>
         {item.duration && (
-          <View style={styles.statItem}>
+          <View style={styles.sessionStatItem}>
             <Clock size={14} color={theme.colors.gray[400]} />
             <Text style={styles.statText}>{Math.round(item.duration)}m duration</Text>
           </View>
@@ -370,6 +372,56 @@ export default function ChatSessionsScreen({ navigation }: ChatSessionsScreenPro
     return sections;
   };
 
+  const renderPersonalizationStats = () => {
+    if (!personalization) return null;
+    
+    return (
+      <View style={styles.statsCard}>
+        <Text style={styles.statsTitle}>Your Journey</Text>
+        <View style={styles.statsRow}>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>
+              {personalization.computed.overallHappiness}
+            </Text>
+            <Text style={styles.statLabel}>Happiness</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>
+              {sessions.length}
+            </Text>
+            <Text style={styles.statLabel}>Conversations</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>
+              {personalization.activityTracking.chatMetrics.engagementStreak}
+            </Text>
+            <Text style={styles.statLabel}>Streak</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>
+              {personalization.wellnessProfile.focusAreas.length}
+            </Text>
+            <Text style={styles.statLabel}>Focus Areas</Text>
+          </View>
+        </View>
+        
+        {/* Show focus areas */}
+        {personalization.wellnessProfile.focusAreas.length > 0 && (
+          <View style={styles.focusAreasContainer}>
+            <Text style={styles.focusAreasTitle}>Improving:</Text>
+            <View style={styles.focusAreasList}>
+              {personalization.wellnessProfile.focusAreas.map(area => (
+                <View key={area} style={styles.focusAreaBadge}>
+                  <Text style={styles.focusAreaText}>{area}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -417,6 +469,9 @@ export default function ChatSessionsScreen({ navigation }: ChatSessionsScreenPro
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Enhanced stats with personalization */}
+      {renderPersonalizationStats()}
 
       <FlatList
         data={[{ key: 'grouped-sessions' }]}
@@ -600,7 +655,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  statItem: {
+  sessionStatItem: {
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -698,5 +753,65 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.gray[500],
     marginLeft: theme.spacing[2],
+  },
+  statsCard: {
+    backgroundColor: theme.colors.white,
+    margin: theme.spacing[4],
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+    marginBottom: theme.spacing[3],
+  },
+  statsTitle: {
+    ...theme.typography.h4,
+    color: theme.colors.text,
+    marginBottom: theme.spacing[3],
+    textAlign: 'center',
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    ...theme.typography.h3,
+    color: theme.colors.primary.main,
+    fontWeight: 'bold',
+  },
+  statLabel: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    marginTop: theme.spacing.xs,
+  },
+  focusAreasContainer: {
+    marginTop: theme.spacing[2],
+  },
+  focusAreasTitle: {
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.gray[900],
+    marginBottom: theme.spacing[1],
+  },
+  focusAreasList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.spacing[1],
+  },
+  focusAreaBadge: {
+    backgroundColor: theme.colors.primary.light,
+    paddingVertical: theme.spacing[1] / 2,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+  },
+  focusAreaText: {
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.primary.main,
+    fontWeight: theme.typography.fontWeight.medium,
   },
 });

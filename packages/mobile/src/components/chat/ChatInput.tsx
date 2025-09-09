@@ -3,6 +3,7 @@ import { View, TextInput, TouchableOpacity, StyleSheet, Text, Alert, Animated } 
 import { Send, Loader2, Mic, MicOff } from 'lucide-react-native';
 import { AudioRecorder, AudioTranscript } from '../../lib/audio/AudioRecorder';
 import { theme } from '../../theme';
+import { generateSmartSuggestions, SuggestionRequest } from '../../lib/ai/suggestionGenerator';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -11,6 +12,7 @@ interface ChatInputProps {
   placeholder?: string;
   inputValue?: string;
   setInputValue?: (val: string) => void;
+  userPersonalization?: any; // Add personalization context
 }
 
 export default function ChatInput({ 
@@ -20,6 +22,7 @@ export default function ChatInput({
   placeholder = "Ask me anything...",
   inputValue,
   setInputValue,
+  userPersonalization,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -27,12 +30,7 @@ export default function ChatInput({
   const [recordingTime, setRecordingTime] = useState(0);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [quickActions] = useState([
-    { emoji: '🌱', text: 'How can I improve my wellbeing?', category: 'wellness' },
-    { emoji: '🎯', text: 'Help me set a goal', category: 'goals' },
-    { emoji: '💭', text: 'I need someone to talk to', category: 'support' },
-    { emoji: '📚', text: 'I want to learn something new', category: 'learning' },
-  ]);
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
 
   const fadeAnim = React.useRef(new Animated.Value(1)).current;
 
@@ -82,41 +80,45 @@ export default function ChatInput({
 
   useEffect(() => {
     if (input.length > 2) {
-      const smartSuggestions = getSmartSuggestions(input);
-      setSuggestions(smartSuggestions);
-      setShowSuggestions(smartSuggestions.length > 0);
+      generateSuggestionsFromLibrary(input);
     } else {
       setShowSuggestions(false);
+      setSuggestions([]);
     }
-  }, [input]);
+  }, [input, userPersonalization]);
 
-  const getSmartSuggestions = (text: string): string[] => {
-    const allSuggestions = [
-      "How can I improve my mood?",
-      "What are some stress management techniques?",
-      "Can you help me set goals?",
-      "I need relationship advice",
-      "How do I stay motivated?",
-      "What should I do when I feel anxious?",
-      "Can you help me build better habits?",
-      "How do I deal with difficult emotions?",
-      "What are some self-care ideas?",
-      "How can I be more productive?",
-    ];
-    
-    return allSuggestions.filter(s => 
-      s.toLowerCase().includes(text.toLowerCase())
-    ).slice(0, 3);
+  const generateSuggestionsFromLibrary = async (text: string) => {
+    setIsGeneratingSuggestions(true);
+    try {
+      const request: SuggestionRequest = {
+        userInput: text,
+        personalization: userPersonalization,
+        maxSuggestions: 4,
+        minInputLength: 3,
+        domain: 'wellness'
+      };
+
+      const response = await generateSmartSuggestions(request);
+      
+      if (response.suggestions.length > 0) {
+        setSuggestions(response.suggestions);
+        setShowSuggestions(true);
+        console.log(`💡 Generated ${response.suggestions.length} suggestions from ${response.source}`);
+      } else {
+        setShowSuggestions(false);
+      }
+    } catch (error) {
+      console.error('Error generating suggestions:', error);
+      setShowSuggestions(false);
+    } finally {
+      setIsGeneratingSuggestions(false);
+    }
   };
 
   const handleSuggestionPress = (suggestion: string) => {
     setInput(suggestion);
     if (setInputValue) setInputValue(suggestion);
     setShowSuggestions(false);
-  };
-
-  const handleQuickAction = (action: { text: string }) => {
-    handleSuggestionPress(action.text);
   };
 
   const handleSend = () => {
@@ -167,38 +169,33 @@ export default function ChatInput({
 
   return (
     <View style={styles.container}>
-      {/* Quick Actions - Show when input is empty */}
-      {input.length === 0 && !isRecording && (
-        <View style={styles.quickActionsContainer}>
-          <Text style={styles.quickActionsTitle}>Quick start:</Text>
-          <View style={styles.quickActions}>
-            {quickActions.map((action, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.quickActionButton}
-                onPress={() => handleQuickAction(action)}
-              >
-                <Text style={styles.quickActionEmoji}>{action.emoji}</Text>
-                <Text style={styles.quickActionText} numberOfLines={1}>
-                  {action.text}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Smart suggestions */}
+      {/* Enhanced smart suggestions with loading state */}
       {showSuggestions && (
         <View style={styles.suggestionsContainer}>
-          <Text style={styles.suggestionsTitle}>Suggestions:</Text>
+          <View style={styles.suggestionsHeader}>
+            <Text style={styles.suggestionsTitle}>Suggestions:</Text>
+            {isGeneratingSuggestions && (
+              <View style={styles.loadingIndicator}>
+                <Loader2 size={12} color={theme.colors.primary.main} />
+              </View>
+            )}
+          </View>
           {suggestions.map((suggestion, index) => (
             <TouchableOpacity
-              key={index}
-              style={styles.suggestionItem}
+              key={`${suggestion}-${index}`}
+              style={[
+                styles.suggestionItem,
+                isGeneratingSuggestions && styles.suggestionItemLoading
+              ]}
               onPress={() => handleSuggestionPress(suggestion)}
+              disabled={isGeneratingSuggestions}
             >
-              <Text style={styles.suggestionText}>{suggestion}</Text>
+              <Text style={[
+                styles.suggestionText,
+                isGeneratingSuggestions && styles.suggestionTextLoading
+              ]}>
+                {suggestion}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -344,48 +341,25 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: theme.colors.gray[200],
   },
-  quickActionsContainer: {
-    marginBottom: theme.spacing[3],
-  },
-  quickActionsTitle: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.gray[600],
-    marginBottom: theme.spacing[2],
-    fontWeight: theme.typography.fontWeight.medium,
-  },
-  quickActions: {
-    flexDirection: 'row',
-    gap: theme.spacing[2],
-  },
-  quickActionButton: {
-    flex: 1,
-    backgroundColor: theme.colors.gray[100],
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[3],
-    alignItems: 'center',
-    minHeight: 60,
-  },
-  quickActionEmoji: {
-    fontSize: 20,
-    marginBottom: theme.spacing[1],
-  },
-  quickActionText: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.gray[700],
-    textAlign: 'center',
-    fontWeight: theme.typography.fontWeight.medium,
-  },
   suggestionsContainer: {
     marginBottom: theme.spacing[3],
     backgroundColor: theme.colors.gray[50],
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[3],
   },
+  suggestionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing[2],
+  },
   suggestionsTitle: {
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.gray[600],
     marginBottom: theme.spacing[2],
     fontWeight: theme.typography.fontWeight.medium,
+  },
+  loadingIndicator: {
+    marginLeft: theme.spacing[2],
   },
   suggestionItem: {
     backgroundColor: theme.colors.white,
@@ -395,9 +369,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.gray[200],
   },
+  suggestionItemLoading: {
+    opacity: 0.6,
+  },
   suggestionText: {
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.gray[700],
+  },
+  suggestionTextLoading: {
+    color: theme.colors.gray[500],
   },
   recordingIndicator: {
     flexDirection: 'row',

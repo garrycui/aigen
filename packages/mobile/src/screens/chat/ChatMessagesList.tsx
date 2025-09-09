@@ -6,13 +6,9 @@ import ChatMessage from '../../components/chat/ChatMessage';
 
 export default function ChatMessagesList({
   messages,
-  suggestedQuestions,
-  onAskSuggested,
   scrollViewRef,
 }: {
   messages: any[];
-  suggestedQuestions: string[];
-  onAskSuggested: (q: string) => void;
   scrollViewRef: any;
 }) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -71,15 +67,9 @@ export default function ChatMessagesList({
       <ChatMessage
         message={item}
         isLatest={isLatest}
-        suggestedQuestions={
-          item.role === 'assistant' && item.id.startsWith('try-asking')
-            ? suggestedQuestions
-            : []
-        }
-        onAskSuggested={onAskSuggested}
       />
     );
-  }, [suggestedQuestions, onAskSuggested, messages.length]);
+  }, [messages.length]);
 
   // Enhanced key extractor to ensure unique keys
   const keyExtractor = useCallback((item: any, index: number) => {

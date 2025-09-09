@@ -1,4 +1,5 @@
 import { AssistantsService } from './assistantsService';
+import { UnifiedPersonalizationProfile } from '../personalization/types';
 
 export interface SessionSummary {
   sessionId: string;
@@ -20,6 +21,25 @@ export interface SessionContext {
   userPersonalization: any;
   recentInteractions: string;
   continuityContext: string;
+}
+
+export interface ChatSession {
+  id: string;
+  userId: string;
+  threadId?: string;
+  title: string;
+  summary?: string;
+  messageCount: number;
+  permaDimension?: string;
+  createdAt: string;
+  updatedAt: string;
+  archived: boolean;
+  context?: {
+    userMood?: number;
+    primaryTopics?: string[];
+    wellnessFocus?: string[];
+    sessionGoal?: string;
+  };
 }
 
 export class SessionManager {
@@ -246,12 +266,12 @@ ${conversationText}
   }
 
   /**
-   * Build context for new sessions based on previous sessions
+   * Build context for new sessions based on previous sessions and unified personalization
    */
   async buildSessionContext(
     userId: string,
     getRecentSessions: (userId: string, limit: number) => Promise<any[]>,
-    personalization?: any
+    personalization?: UnifiedPersonalizationProfile // UPDATED: Use unified type
   ): Promise<SessionContext> {
     try {
       // Get last 3 sessions for context
@@ -274,8 +294,8 @@ ${conversationText}
           completedAt: session.completedAt || session.updatedAt
         }));
 
-      // Build continuity context
-      const continuityContext = this.buildContinuityContext(previousSessions);
+      // ENHANCED: Build continuity context with personalization awareness
+      const continuityContext = this.buildEnhancedContinuityContext(previousSessions, personalization);
       
       // Build recent interactions summary
       const recentInteractions = this.buildRecentInteractionsContext(previousSessions);
@@ -299,9 +319,12 @@ ${conversationText}
   }
 
   /**
-   * Build continuity context from previous sessions
+   * ENHANCED: Build continuity context with personalization awareness
    */
-  private buildContinuityContext(previousSessions: SessionSummary[]): string {
+  private buildEnhancedContinuityContext(
+    previousSessions: SessionSummary[], 
+    personalization?: UnifiedPersonalizationProfile
+  ): string {
     if (previousSessions.length === 0) return '';
     
     const contexts: string[] = [];
@@ -321,6 +344,32 @@ ${conversationText}
       
       if (lastSession.importantContext) {
         contexts.push(`Important context: ${lastSession.importantContext}`);
+      }
+    }
+    
+    // ENHANCED: Add personalization-aware context
+    if (personalization) {
+      // Focus on user's current focus areas
+      if (personalization.wellnessProfile.focusAreas.length > 0) {
+        contexts.push(`User is working on improving: ${personalization.wellnessProfile.focusAreas.join(', ')}`);
+      }
+      
+      // Include recent engagement patterns
+      if (personalization.activityTracking.chatMetrics.preferredTopics.length > 0) {
+        const topTopics = personalization.activityTracking.chatMetrics.preferredTopics
+          .slice(0, 2)
+          .map(t => t.topic);
+        contexts.push(`User especially engages with: ${topTopics.join(', ')}`);
+      }
+      
+      // Include current mood/happiness level
+      if (personalization.computed.overallHappiness) {
+        const moodLevel = personalization.computed.overallHappiness;
+        if (moodLevel <= 4) {
+          contexts.push('User may need extra emotional support right now');
+        } else if (moodLevel >= 8) {
+          contexts.push('User is in a positive state - good time for growth conversations');
+        }
       }
     }
     
@@ -424,5 +473,141 @@ ${conversationText}
     }
     
     return false;
+  }
+
+  static generateSessionTitle(messages: string[], personalization: UnifiedPersonalizationProfile): string {
+    // Extract key themes from conversation
+    const commonWords = this.extractKeyWords(messages);
+    const userFocus = personalization.wellnessProfile.focusAreas[0];
+    
+    // Generate contextual title
+    if (commonWords.includes('stress') || commonWords.includes('anxiety')) {
+      return `Stress Relief Chat - ${new Date().toLocaleDateString()}`;
+    }
+    if (commonWords.includes('goal') || commonWords.includes('achievement')) {
+      return `Goal Setting Session - ${userFocus}`;
+    }
+    if (commonWords.includes('relationship') || commonWords.includes('friend')) {
+      return `Relationship Discussion`;
+    }
+    
+    return `${userFocus} Conversation - ${new Date().toLocaleDateString()}`;
+  }
+
+  static determineSessionContext(
+    messages: any[], 
+    personalization: UnifiedPersonalizationProfile
+  ): ChatSession['context'] {
+    const recentMessages = messages.slice(-5);
+    const messageText = recentMessages.map(m => m.content).join(' ').toLowerCase();
+    
+    // Analyze user mood from sentiment
+    const positiveWords = ['happy', 'great', 'good', 'excited', 'love'];
+    const negativeWords = ['sad', 'stressed', 'tired', 'anxious', 'difficult'];
+    
+    let moodScore = 5; // neutral
+    positiveWords.forEach(word => {
+      if (messageText.includes(word)) moodScore += 1;
+    });
+    negativeWords.forEach(word => {
+      if (messageText.includes(word)) moodScore -= 1;
+    });
+    
+    // Extract topics
+    const topics = this.extractTopicsFromMessages(recentMessages);
+    
+    // Determine wellness focus based on conversation
+    const wellnessFocus = this.mapTopicsToWellness(topics, personalization);
+    
+    return {
+      userMood: Math.max(1, Math.min(10, moodScore)),
+      primaryTopics: topics.slice(0, 3),
+      wellnessFocus,
+      sessionGoal: this.inferSessionGoal(topics, personalization)
+    };
+  }
+
+  private static extractKeyWords(messages: string[]): string[] {
+    const text = messages.join(' ').toLowerCase();
+    const keywords = [
+      'stress', 'anxiety', 'goal', 'achievement', 'relationship', 'friend',
+      'happy', 'sad', 'work', 'family', 'health', 'exercise', 'sleep'
+    ];
+    
+    return keywords.filter(keyword => text.includes(keyword));
+  }
+
+  private static extractTopicsFromMessages(messages: any[]): string[] {
+    // Extract key topics from conversation
+    const topics: string[] = [];
+    
+    messages.forEach(message => {
+      const content = message.content.toLowerCase();
+      
+      // Topic patterns
+      if (content.includes('work') || content.includes('job') || content.includes('career')) {
+        topics.push('career');
+      }
+      if (content.includes('relationship') || content.includes('partner') || content.includes('friend')) {
+        topics.push('relationships');
+      }
+      if (content.includes('health') || content.includes('exercise') || content.includes('fitness')) {
+        topics.push('health');
+      }
+      if (content.includes('stress') || content.includes('anxiety') || content.includes('worry')) {
+        topics.push('stress-management');
+      }
+      if (content.includes('goal') || content.includes('dream') || content.includes('plan')) {
+        topics.push('goal-setting');
+      }
+    });
+    
+    return [...new Set(topics)];
+  }
+
+  private static mapTopicsToWellness(
+    topics: string[], 
+    personalization: UnifiedPersonalizationProfile
+  ): string[] {
+    const mapping: Record<string, string> = {
+      'career': 'accomplishment',
+      'relationships': 'relationships',
+      'health': 'positiveEmotion',
+      'stress-management': 'positiveEmotion',
+      'goal-setting': 'accomplishment'
+    };
+    
+    const wellnessDimensions = topics.map(topic => mapping[topic]).filter(Boolean);
+    
+    // Add user's focus areas
+    wellnessDimensions.push(...personalization.wellnessProfile.focusAreas);
+    
+    return [...new Set(wellnessDimensions)];
+  }
+
+  private static inferSessionGoal(
+    topics: string[], 
+    personalization: UnifiedPersonalizationProfile
+  ): string {
+    if (topics.includes('stress-management')) {
+      return 'Reduce stress and improve emotional wellbeing';
+    }
+    if (topics.includes('goal-setting')) {
+      return 'Clarify and work towards personal goals';
+    }
+    if (topics.includes('relationships')) {
+      return 'Improve social connections and communication';
+    }
+    
+    // Default based on user's primary focus area
+    const primaryFocus = personalization.wellnessProfile.focusAreas[0];
+    switch (primaryFocus) {
+      case 'positiveEmotion': return 'Boost mood and positive emotions';
+      case 'engagement': return 'Find activities that create flow and engagement';
+      case 'relationships': return 'Strengthen social connections';
+      case 'meaning': return 'Discover purpose and meaning';
+      case 'accomplishment': return 'Achieve personal goals and build confidence';
+      default: return 'Improve overall wellbeing and happiness';
+    }
   }
 }
