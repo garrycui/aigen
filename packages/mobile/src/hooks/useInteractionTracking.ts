@@ -32,6 +32,19 @@ interface TopicEngagement {
   context: string;
 }
 
+interface VideoInteraction {
+  videoId: string;
+  title: string;
+  channelTitle?: string;
+  interactionType: 'view' | 'like' | 'dislike' | 'skip' | 'complete' | 'watch' | 'scroll_past';
+  watchDuration?: number; // seconds watched
+  totalDuration?: number; // total video length
+  topics?: string[]; // extracted topics from video
+  timestamp: string;
+  searchQuery?: string; // what search led to this video
+  positionInResults?: number; // position when found (1-based)
+}
+
 export function useInteractionTracking(userId: string) {
   const { createDocument } = useFirebase();
   const { profile: personalization, updateProfile } = useUnifiedPersonalization(userId);
@@ -115,6 +128,28 @@ export function useInteractionTracking(userId: string) {
       console.log('✅ Topic engagement tracked:', engagement.topic);
     } catch (error) {
       console.error('❌ Error tracking topic engagement:', error);
+    }
+  }, [userId, personalization, updateProfile]);
+
+  const trackVideoInteraction = useCallback(async (interaction: VideoInteraction) => {
+    if (!userId) return;
+    
+    try {
+      const cleanInteraction = removeUndefinedFields(interaction);
+      await createDocument('userInteractions', {
+        userId,
+        type: 'video_interaction',
+        data: cleanInteraction,
+        timestamp: new Date().toISOString(),
+        processed: false
+      });
+      
+      // Update video metrics and preferences
+      await updateVideoPreferences(interaction);
+      
+      console.log('✅ Video interaction tracked:', interaction.videoId, interaction.interactionType);
+    } catch (error) {
+      console.error('❌ Error tracking video interaction:', error);
     }
   }, [userId, personalization, updateProfile]);
 
@@ -353,9 +388,168 @@ export function useInteractionTracking(userId: string) {
     }
   };
 
+  const updateVideoPreferences = async (interaction: VideoInteraction) => {
+    if (!personalization) return;
+    
+    try {
+      const currentVideoMetrics = personalization.activityTracking.videoMetrics || {
+        totalWatched: 0,
+        completionRate: 0,
+        likedTopics: [],
+        skipgedTopics: [],
+        watchTime: {}
+      };
+      
+      // Calculate engagement score based on interaction type and watch time
+      let engagementScore = 5; // neutral baseline
+      
+      if (interaction.interactionType === 'like') engagementScore = 9;
+      else if (interaction.interactionType === 'dislike') engagementScore = 2;
+      else if (interaction.interactionType === 'skip') engagementScore = 1;
+      else if (interaction.interactionType === 'complete') engagementScore = 10;
+      else if (interaction.interactionType === 'view' && interaction.watchDuration && interaction.totalDuration) {
+        const completionPercent = interaction.watchDuration / interaction.totalDuration;
+        engagementScore = Math.round(completionPercent * 10);
+      }
+      
+      // Extract topics from video title and description
+      const extractedTopics = extractTopicsFromVideo(interaction.title, interaction.channelTitle);
+      
+      // Update video metrics
+      const updatedVideoMetrics = {
+        totalWatched: currentVideoMetrics.totalWatched + 1,
+        completionRate: interaction.watchDuration && interaction.totalDuration 
+          ? ((currentVideoMetrics.completionRate * currentVideoMetrics.totalWatched) + 
+             (interaction.watchDuration / interaction.totalDuration)) / (currentVideoMetrics.totalWatched + 1)
+          : currentVideoMetrics.completionRate,
+        likedTopics: interaction.interactionType === 'like' 
+          ? [...new Set([...currentVideoMetrics.likedTopics, ...extractedTopics])]
+          : currentVideoMetrics.likedTopics,
+        skipgedTopics: interaction.interactionType === 'skip' || interaction.interactionType === 'dislike'
+          ? [...new Set([...currentVideoMetrics.skipgedTopics, ...extractedTopics])]
+          : currentVideoMetrics.skipgedTopics,
+        watchTime: {
+          ...currentVideoMetrics.watchTime,
+          ...extractedTopics.reduce((acc, topic) => ({
+            ...acc,
+            [topic]: (currentVideoMetrics.watchTime[topic] || 0) + (interaction.watchDuration || 0) / 60 // minutes
+          }), {})
+        }
+      };
+      
+      // Update preferred topics in chat metrics based on video engagement
+      const currentChatMetrics = personalization.activityTracking.chatMetrics || {
+        totalMessages: 0,
+        positiveInteractions: 0,
+        engagementStreak: 0,
+        lastActiveTime: new Date().toISOString(),
+        preferredTopics: []
+      };
+      
+      const updatedPreferredTopics = updatePreferredTopics(
+        currentChatMetrics.preferredTopics || [],
+        extractedTopics,
+        engagementScore,
+        {}
+      );
+      
+      // Update emerging interests based on high engagement
+      let updatedEmergingInterests = personalization.contentPreferences.emergingInterests || [];
+      if (engagementScore >= 8) {
+        extractedTopics.forEach(topic => {
+          if (!personalization.contentPreferences.primaryInterests.includes(topic) &&
+              !updatedEmergingInterests.includes(topic)) {
+            updatedEmergingInterests = [...updatedEmergingInterests.slice(-3), topic]; // Keep last 4 total
+          }
+        });
+      }
+      
+      // Update topic scores
+      const updatedTopicScores = { ...personalization.contentPreferences.topicScores };
+      extractedTopics.forEach(topic => {
+        const currentScore = updatedTopicScores[topic.toLowerCase()] || 5;
+        const scoreChange = (engagementScore - 5) * 0.1; // Small incremental changes
+        updatedTopicScores[topic.toLowerCase()] = Math.max(1, Math.min(10, currentScore + scoreChange));
+      });
+      
+      await updateProfile({
+        activityTracking: {
+          ...personalization.activityTracking,
+          videoMetrics: updatedVideoMetrics,
+          chatMetrics: {
+            ...currentChatMetrics,
+            preferredTopics: updatedPreferredTopics
+          }
+        },
+        contentPreferences: {
+          ...personalization.contentPreferences,
+          emergingInterests: updatedEmergingInterests,
+          topicScores: updatedTopicScores
+        },
+        computed: {
+          ...personalization.computed,
+          lastEngagementType: 'video',
+          engagementLevel: engagementScore >= 8 ? 'high' : engagementScore >= 5 ? 'medium' : 'low'
+        },
+        lastUpdated: new Date().toISOString()
+      });
+      
+      console.log('📹 Updated video preferences:', {
+        engagementScore,
+        extractedTopics,
+        totalWatched: updatedVideoMetrics.totalWatched,
+        emergingInterests: updatedEmergingInterests.length
+      });
+      
+    } catch (error) {
+      console.error('❌ Error updating video preferences:', error);
+    }
+  };
+
+  // Helper function to extract topics from video metadata
+  const extractTopicsFromVideo = (title: string, channelTitle?: string): string[] => {
+    const topics: string[] = [];
+    const text = `${title} ${channelTitle || ''}`.toLowerCase();
+    
+    // Common topic patterns in video titles
+    const topicPatterns = [
+      /(?:how to|tutorial|guide).+?([a-z]+(?:\s+[a-z]+){0,2})/gi,
+      /([a-z]+(?:\s+[a-z]+){0,2})(?:\s+(?:tips|advice|hacks|secrets))/gi,
+      /(?:best|top|amazing|ultimate).+?([a-z]+(?:\s+[a-z]+){0,2})/gi,
+      /([a-z]+(?:\s+[a-z]+){0,2})(?:\s+(?:workout|exercise|fitness))/gi,
+      /([a-z]+(?:\s+[a-z]+){0,2})(?:\s+(?:cooking|recipe|food))/gi,
+      /([a-z]+(?:\s+[a-z]+){0,2})(?:\s+(?:meditation|mindfulness|wellness))/gi,
+      /([a-z]+(?:\s+[a-z]+){0,2})(?:\s+(?:productivity|motivation|success))/gi
+    ];
+    
+    topicPatterns.forEach(pattern => {
+      const matches = text.match(pattern);
+      if (matches) {
+        matches.forEach(match => {
+          const cleaned = match.trim();
+          if (cleaned.length > 3 && cleaned.length < 25) {
+            topics.push(cleaned);
+          }
+        });
+      }
+    });
+    
+    // Extract from channel title (often indicates niche)
+    if (channelTitle) {
+      const channelTopics = channelTitle.toLowerCase()
+        .split(/[\s-_]+/)
+        .filter(word => word.length > 3 && word.length < 15)
+        .slice(0, 2); // Max 2 topics from channel
+      topics.push(...channelTopics);
+    }
+    
+    return [...new Set(topics)].slice(0, 5); // Max 5 unique topics
+  };
+
   return {
     trackChatInteraction,
     trackAnalyticsResult,
-    trackTopicEngagement
+    trackTopicEngagement,
+    trackVideoInteraction
   };
 }

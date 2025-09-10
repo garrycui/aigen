@@ -32,8 +32,13 @@ export default function AppNavigator() {
             )}
           </Stack.Screen>
         ) : (
+          // Always include Main navigator and assessment screens
           <>
-            <Stack.Screen name="Main" component={MainNavigator} />
+            <Stack.Screen 
+              name="Main" 
+              component={MainNavigator}
+              initialParams={!user.hasCompletedAssessment ? undefined : { screen: 'Chat' }}
+            />
             <Stack.Screen name="AssessmentIntro" component={AssessmentIntro} />
             <Stack.Screen name="Assessment" component={AssessmentScreen} />
           </>

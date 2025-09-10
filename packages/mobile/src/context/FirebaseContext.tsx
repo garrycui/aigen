@@ -108,7 +108,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         return { success: true, data: { id: docSnap.id, ...docSnap.data() } };
       } else {
         return { success: false, error: 'Document not found' };
-    }
+      }
     } catch (error) {
       console.error(`Error fetching document from ${collectionName}:`, error);
       return { success: false, error: `Failed to fetch ${collectionName} document` };

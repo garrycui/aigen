@@ -52,7 +52,7 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
   } = useFirebase();
 
   // UPDATED: Use unified personalization instead of dynamic
-  const { profile: personalization, loading: personalizationLoading } = useUnifiedPersonalization(user?.id || '');
+  const { profile: personalization, loading: personalizationLoading, loadProfile } = useUnifiedPersonalization(user?.id || '');
   const { trackChatInteraction, trackAnalyticsResult, trackTopicEngagement } = useInteractionTracking(user?.id || '');
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
@@ -152,12 +152,32 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
     try {
       setIsInitializing(true);
       
-      // UPDATED: Use unified personalization profile instead of assessment
-      if (personalization) {
-        const userContext = buildUserContextFromProfile(personalization);
+      // Load personalization profile first
+      const profileData = personalization || await loadProfile();
+      
+      if (profileData) {
+        const userContext = buildUserContextFromProfile(profileData);
         setUserContext(userContext);
+        console.log('✅ Personalization profile loaded successfully');
       } else {
-        console.log('No personalization profile found, user may need to complete assessment');
+        console.log('⚠️ No personalization profile found, user needs to complete assessment');
+        // Set a basic context for users without completed assessment
+        setUserContext({
+          name: user?.name || 'User',
+          mbtiType: 'unknown',
+          communicationStyle: 'balanced',
+          learningPreference: 'mixed',
+          emotionalState: 'exploring',
+          supportNeeds: 'general wellness',
+          perma: {
+            positiveEmotion: 5,
+            engagement: 5,
+            relationships: 5,
+            meaning: 5,
+            accomplishment: 5
+          },
+          interests: []
+        });
       }
 
       const sessionsResult = await getChatSessions(user!.id);
@@ -185,20 +205,32 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
   const loadSpecificSession = async (sessionId: string) => {
     try {
       setIsInitializing(true);
-      const assessmentResult = await getUserAssessment(user!.id);
-      let assessment = null;
-      if (assessmentResult.success && assessmentResult.data?.length > 0) {
-        assessment = assessmentResult.data[0];
+      
+      // Load personalization profile first
+      const profileData = personalization || await loadProfile();
+      
+      if (profileData) {
+        const userContext = buildUserContextFromProfile(profileData);
+        setUserContext(userContext);
+        console.log('✅ Personalization profile loaded for session');
+      } else {
+        console.log('⚠️ No personalization profile found');
+        // Set basic context
         setUserContext({
-          mbtiType: assessment.mbti_type,
-          aiPreference: assessment.ai_preference,
-          communicationStyle: assessment.communication_style,
-          learningPreference: assessment.learning_preference,
-          emotionalState: assessment.emotional_state,
-          supportNeeds: assessment.support_needs,
-          perma: assessment.perma,
-          interests: assessment.interests,
-          name: assessment.nickname,
+          name: user?.name || 'User',
+          mbtiType: 'unknown',
+          communicationStyle: 'balanced',
+          learningPreference: 'mixed',
+          emotionalState: 'exploring',
+          supportNeeds: 'general wellness',
+          perma: {
+            positiveEmotion: 5,
+            engagement: 5,
+            relationships: 5,
+            meaning: 5,
+            accomplishment: 5
+          },
+          interests: []
         });
       }
 
@@ -226,7 +258,7 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
               user!.id, 
               userContext || undefined,
               getRecentSessionsWrapper,
-              personalization
+              profileData
             );
             setSessionContext(ctx || null);
           } catch (error) {
@@ -249,22 +281,35 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
   const initializeNewChat = async () => {
     try {
       setIsInitializing(true);
-      const assessmentResult = await getUserAssessment(user!.id);
-      let assessment = null;
-      if (assessmentResult.success && assessmentResult.data?.length > 0) {
-        assessment = assessmentResult.data[0];
+      
+      // Load personalization profile first
+      const profileData = personalization || await loadProfile();
+      
+      if (profileData) {
+        const userContext = buildUserContextFromProfile(profileData);
+        setUserContext(userContext);
+        console.log('✅ Personalization profile loaded for new chat');
+      } else {
+        console.log('⚠️ No personalization profile found for new chat');
+        // Set basic context
         setUserContext({
-          mbtiType: assessment.mbti_type,
-          aiPreference: assessment.ai_preference,
-          communicationStyle: assessment.communication_style,
-          learningPreference: assessment.learning_preference,
-          emotionalState: assessment.emotional_state,
-          supportNeeds: assessment.support_needs,
-          perma: assessment.perma,
-          interests: assessment.interests,
-          name: assessment.nickname,
+          name: user?.name || 'User',
+          mbtiType: 'unknown',
+          communicationStyle: 'balanced',
+          learningPreference: 'mixed',
+          emotionalState: 'exploring',
+          supportNeeds: 'general wellness',
+          perma: {
+            positiveEmotion: 5,
+            engagement: 5,
+            relationships: 5,
+            meaning: 5,
+            accomplishment: 5
+          },
+          interests: []
         });
       }
+      
       await createNewSession();
       setSessionTitle('New Chat');
       setMessages([]);
@@ -422,17 +467,31 @@ export default function ChatScreen({ route, navigation }: { route?: any; navigat
   };
 
   const sendWelcomeMessage = () => {
+    const hasPersonalization = personalization && personalization.userCore?.mbtiType !== 'unknown';
+    
     const welcomeMsg: ExtendedChatMessage = {
       id: `welcome-${Date.now()}`,
-      content: `👋 **Hi there!** I'm your AI happiness companion. 
+      content: hasPersonalization 
+        ? `👋 **Hi ${user?.name || 'there'}!** 
 
-I'm here to help you discover what brings you joy and support your wellbeing journey.
+I'm your AI happiness companion, now personalized just for you! 
 
-**What would you like to explore today?**
-- Share what's on your mind
-- Ask about building happiness habits  
-- Discuss your goals and dreams
-- Or just chat about anything! 😊`,
+Based on your profile, I can help you with:
+- Building ${personalization?.wellnessProfile?.focusAreas?.slice(0, 2)?.join(' and ') || 'happiness habits'}
+- Exploring your interests in ${personalization?.contentPreferences?.primaryInterests?.slice(0, 2)?.join(' and ') || 'various topics'}
+- Supporting your wellbeing journey
+
+**What would you like to explore today?** 😊`
+        : `👋 **Hi there!** I'm your AI happiness companion.
+
+I notice you haven't completed your personality assessment yet. To give you the most personalized experience, I'd recommend taking a few minutes to complete it first.
+
+**Would you like to:**
+- Complete your personality assessment (3-5 minutes)
+- Chat with me using general recommendations
+- Learn more about what I can help you with
+
+Just let me know what sounds good! 😊`,
       role: 'assistant',
       timestamp: new Date().toISOString(),
       sentiment: 'positive',
@@ -852,22 +911,39 @@ I'm here to help you discover what brings you joy and support your wellbeing jou
   };
 
   // UPDATED: Build UserContext from UnifiedPersonalizationProfile
-  const buildUserContextFromProfile = (profile: any) => {
-    if (!profile) return null;
+  const buildUserContextFromProfile = (profile: any): UserContext => {
+    if (!profile) return {
+      name: user?.name || 'User',
+      mbtiType: 'unknown',
+      communicationStyle: 'balanced',
+      learningPreference: 'mixed',
+      emotionalState: 'exploring',
+      supportNeeds: 'general wellness',
+      perma: {
+        positiveEmotion: 5,
+        engagement: 5,
+        relationships: 5,
+        meaning: 5,
+        accomplishment: 5
+      },
+      interests: []
+    };
     
     return {
-      mbtiType: profile.userCore?.mbtiType,
-      communicationStyle: profile.userCore?.communicationStyle,
-      learningPreference: profile.userCore?.learningStyle,
+      mbtiType: profile.userCore?.mbtiType || 'unknown',
+      communicationStyle: profile.userCore?.communicationStyle || 'balanced',
+      learningPreference: profile.userCore?.learningStyle || 'mixed',
       emotionalState: profile.computed?.needsAttention?.length > 0 ? 'needs_support' : 'stable',
-      supportNeeds: profile.wellnessProfile?.focusAreas?.join(', '),
-      perma: profile.wellnessProfile?.currentScores,
-      interests: profile.contentPreferences?.primaryInterests,
-      name: user?.name || 'User',
-      // NEW: Add wellness context
-      wellnessFocus: profile.wellnessProfile?.focusAreas,
-      happinessSources: profile.wellnessProfile?.happinessSources,
-      currentMood: profile.computed?.overallHappiness
+      supportNeeds: profile.wellnessProfile?.focusAreas?.join(', ') || 'general wellness',
+      perma: profile.wellnessProfile?.currentScores || {
+        positiveEmotion: 5,
+        engagement: 5,
+        relationships: 5,
+        meaning: 5,
+        accomplishment: 5
+      },
+      interests: profile.contentPreferences?.primaryInterests || [],
+      name: user?.name || 'User'
     };
   };
 

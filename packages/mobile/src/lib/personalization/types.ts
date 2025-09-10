@@ -97,6 +97,9 @@ export interface ActivityTracking {
     likedTopics: string[];
     skipgedTopics: string[];
     watchTime: Record<string, number>; // topic -> minutes watched
+    lastWatchedAt?: string;
+    preferredChannels?: string[];
+    avgSessionLength?: number; // average watch time per video in minutes
   };
   progressTracking: {
     permaImprovement: Partial<PermaScores>; // Change over time

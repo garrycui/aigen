@@ -1,169 +1,304 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  ScrollView, 
-  ActivityIndicator, 
-  StyleSheet, 
-  RefreshControl,
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
   TouchableOpacity,
+  StyleSheet,
+  Alert,
+  Linking,
+  ActivityIndicator,
+  StatusBar,
   Dimensions,
   Modal,
-  Alert,
-  Linking
+  ScrollView
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Sparkles, TrendingUp, Target, Heart, Play, X, ArrowLeft, ExternalLink } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
-import { useUnifiedPersonalization } from '../../hooks/useUnifiedPersonalization';
+import { usePersonalization } from '../../hooks/usePersonalization';
 import { useInteractionTracking } from '../../hooks/useInteractionTracking';
-import { getPersonalizedVideoSections, VideoSection, YouTubeVideo } from '../../lib/video/videoRecommender';
-import YouTubeVideoList from '../../components/video/YouTubeVideoList';
+import { useVideoBehaviorTracking } from '../../hooks/useVideoBehaviorTracking';
+import { useIntelligentVideoRecommendations } from '../../hooks/useIntelligentVideoRecommendations';
+import { getIntelligentPersonalizedVideos, YouTubeVideo, UnifiedVideoResponse, getQuotaStatus } from '../../lib/video/videoRecommender';
+import { SimpleQuotaManager } from '../../lib/video/simpleQuotaManager';
+import FullScreenVideoList from '../../components/video/FullScreenVideoList';
 import { theme } from '../../theme';
-
-// Conditional WebView import with fallback
-let WebView: any = null;
-try {
-  const { WebView: RNWebView } = require('react-native-webview');
-  WebView = RNWebView;
-} catch (error) {
-  console.warn('react-native-webview not available, videos will open in browser');
-}
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function VideoRecommendationsScreen({ navigation }: any) {
   const { user } = useAuth();
-  const { profile: personalization, loading: personalizationLoading } = useUnifiedPersonalization(user?.id || '');
-  const { trackTopicEngagement } = useInteractionTracking(user?.id || '');
+  const { profile: personalization, loading: personalizationLoading, hasCompletedAssessment } = usePersonalization(user?.id || '');
+  const { trackTopicEngagement, trackVideoInteraction } = useInteractionTracking(user?.id || '');
+  const { trackBehavior, generateAdaptiveQueries, backgroundLoader } = useVideoBehaviorTracking(user?.id || '');
+  const { 
+    generateHybridQueries, 
+    trackIntelligentInteraction, 
+    calculateMixingRatio, 
+    getEngagementProfile,
+    isReady 
+  } = useIntelligentVideoRecommendations(user?.id || '');
   
-  // State management
-  const [videoSections, setVideoSections] = useState<VideoSection[]>([]);
-  const [allVideos, setAllVideos] = useState<(YouTubeVideo & { sectionName: string; permaDimension: string })[]>([]);
+  // State management - Updated for full-screen experience
+  const [videos, setVideos] = useState<YouTubeVideo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [watchedVideos, setWatchedVideos] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'sections' | 'all'>('sections');
+  const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
+  const [quotaManager] = useState(() => SimpleQuotaManager.getInstance());
   
-  // Video player state
-  const [selectedVideo, setSelectedVideo] = useState<YouTubeVideo | null>(null);
-  const [showVideoPlayer, setShowVideoPlayer] = useState(false);
-  const [currentVideoSection, setCurrentVideoSection] = useState<string>('');
+  // Background video loading
+  const loadingTimeoutRef = useRef<NodeJS.Timeout>();
+  const lastBackgroundLoadRef = useRef<number>(0);
 
-  const fetchVideoSections = useCallback(async () => {
+  const fetchVideoSections = useCallback(async (useIntelligentMixing: boolean = false, append: boolean = false) => {
     if (!user) {
       setError('Please log in to see personalized videos');
       setLoading(false);
       return;
     }
 
-    if (personalizationLoading) {
-      console.log('⏳ [VideoScreen] Waiting for personalization to load...');
+    if (personalizationLoading || !isReady) {
+      console.log('⏳ [VideoScreen] Waiting for personalization and intelligence to load...');
       return;
     }
 
-    if (!personalization) {
-      console.log('⚠️ [VideoScreen] No personalization found');
-      setError('Complete your assessment to get personalized video recommendations');
+    if (!personalization || !hasCompletedAssessment) {
+      console.log('⚠️ [VideoScreen] No personalization found or assessment not completed');
+      setError('assessment_required');
       setLoading(false);
-      setRefreshing(false);
       return;
     }
     
-    setLoading(true);
+    if (!append) setLoading(true);
     setError(null);
+    
     try {
-      console.log('🎬 [VideoScreen] Fetching personalized sections...');
-      const sections = await getPersonalizedVideoSections(personalization, {});
-      console.log('✅ [VideoScreen] Received sections:', sections.length);
+      // Check YouTube API quota status first
+      const quotaStatus = getQuotaStatus();
+      if (quotaStatus.isExceeded) {
+        console.warn('🚫 [VideoScreen] YouTube API quota exceeded');
+        setError(`YouTube API limit reached. Videos will be available again in ${quotaStatus.hoursUntilReset} hours.`);
+        setLoading(false);
+        return;
+      }
+
+      // Initialize quota manager
+      await quotaManager.init();
+      const quotaInfo = quotaManager.getQuotaInfo();
       
-      setVideoSections(sections);
+      console.log('🧠 [VideoScreen] Fetching videos with quota-aware mixing:', {
+        useIntelligentMixing,
+        quotaStatus: quotaInfo.status,
+        remaining: quotaInfo.remaining
+      });
       
-      // Flatten all videos for the "All Videos" view
-      const flattenedVideos = sections.flatMap(section => 
-        section.videos.map(video => ({
-          ...video,
-          sectionName: section.topicName,
-          permaDimension: section.permaDimension
-        }))
-      );
-      setAllVideos(flattenedVideos);
+      let response: UnifiedVideoResponse;
       
-    } catch (error) {
-      console.error('❌ [VideoScreen] Error fetching video sections:', error);
-      setError('Failed to load personalized videos. Please try again.');
-      setVideoSections([]);
-      setAllVideos([]);
-    } finally {
+      if (useIntelligentMixing && quotaManager.canMakeAPICall()) {
+        // Use intelligent recommendation system with quota awareness
+        const hybridQueries = generateHybridQueries();
+        const mixingRatio = calculateMixingRatio();
+        
+        // Limit queries based on quota status
+        const maxQueries = quotaInfo.status === 'critical' ? 1 : quotaInfo.status === 'warning' ? 2 : 3;
+        
+        // Prioritize queries based on user behavior
+        const userInteractions: any[] = []; // Get from engagement profile
+        const engagementProfile = getEngagementProfile();
+        
+        console.log('🎯 [VideoScreen] Using intelligent mixing with quota limits:', {
+          queries: {
+            profile: Math.min(hybridQueries.profileQueries.length, maxQueries),
+            behavior: Math.min(hybridQueries.behaviorQueries.length, maxQueries),
+            exploration: Math.min(hybridQueries.explorationQueries.length, 1)
+          },
+          ratio: mixingRatio,
+          quotaLimited: maxQueries < 3,
+          engagementStats: {
+            totalInteractions: engagementProfile.totalInteractions,
+            avgScore: engagementProfile.avgEngagementScore
+          }
+        });
+        
+        response = await getIntelligentPersonalizedVideos(
+          personalization,
+          {
+            profileQueries: hybridQueries.profileQueries.slice(0, maxQueries),
+            behaviorQueries: hybridQueries.behaviorQueries.slice(0, maxQueries),
+            explorationQueries: hybridQueries.explorationQueries.slice(0, 1)
+          },
+          mixingRatio,
+          {
+            pageSize: quotaInfo.status === 'critical' ? 20 : 40, // Smaller batch if quota limited
+            userLanguage: 'en'
+          }
+        );
+      } else if (quotaManager.canMakeAPICall()) {
+        // Fallback to simpler approach with quota awareness
+        const adaptiveQueries = generateAdaptiveQueries();
+        const quotaAwareQueries = adaptiveQueries.length > 0 ? adaptiveQueries.slice(0, 2) : [
+          'motivation tutorial',
+          'productivity tips'
+        ];
+        
+        response = await getIntelligentPersonalizedVideos(
+          personalization,
+          {
+            profileQueries: quotaAwareQueries,
+            behaviorQueries: [],
+            explorationQueries: ['wellness guide', 'personal development']
+          },
+          { profileWeight: 0.7, behaviorWeight: 0.1, explorationWeight: 0.2 },
+          {
+            pageSize: 25,
+            userLanguage: 'en'
+          }
+        );
+      } else {
+        // No quota available - show cached content only
+        console.warn('⚠️ [VideoScreen] No API quota available, using cached content only');
+        setError('Daily API limit reached. Showing cached content until tomorrow.');
+        return;
+      }
+      
+      console.log('✅ [VideoScreen] Received videos:', response.videos.length);
+      
+      if (append) {
+        setVideos(prev => [...prev, ...response.videos]);
+      } else {
+        setVideos(response.videos);
+      }
+      
+      } catch (error) {
+        console.error('❌ [VideoScreen] Error fetching videos:', error);
+        
+        // Show user-friendly message for quota errors
+        if (error instanceof Error && error.message.includes('403')) {
+          setError('YouTube API limit reached. Please try again tomorrow.');
+        } else {
+          setError('Failed to load personalized videos. Please try again.');
+        }
+        
+        if (!append) setVideos([]);
+      } finally {
       setLoading(false);
-      setRefreshing(false);
+      setBackgroundLoading(false);
     }
-  }, [user, personalization, personalizationLoading]);
+  }, [user, personalization, personalizationLoading, hasCompletedAssessment, isReady, generateHybridQueries, calculateMixingRatio, getEngagementProfile, generateAdaptiveQueries, quotaManager]);
+
+  // Background loading triggered by user behavior
+  const triggerBackgroundLoad = useCallback(() => {
+    const now = Date.now();
+    const timeSinceLastLoad = now - lastBackgroundLoadRef.current;
+    
+    // Avoid too frequent background loads
+    if (timeSinceLastLoad < 30000 || backgroundLoading) { // 30 seconds minimum
+      return;
+    }
+    
+    lastBackgroundLoadRef.current = now;
+    setBackgroundLoading(true);
+    
+    console.log('🔄 [VideoScreen] Triggering background load with adaptive queries');
+    fetchVideoSections(true, true); // Use adaptive queries and append
+  }, [fetchVideoSections, backgroundLoading]);
 
   useEffect(() => {
     fetchVideoSections();
   }, [fetchVideoSections]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchVideoSections();
-  }, [fetchVideoSections]);
-
-  const handleVideoPress = useCallback(async (video: YouTubeVideo, sectionName?: string) => {
-    console.log('🎯 [VideoScreen] Playing video:', video.title);
-    
-    // Track video interaction
-    handleVideoInteraction(video.videoId, sectionName || '', 'view');
-    
-    if (WebView) {
-      // Use in-app WebView if available
-      setSelectedVideo(video);
-      setCurrentVideoSection(sectionName || '');
-      setShowVideoPlayer(true);
-    } else {
-      // Fallback to opening in browser
-      try {
-        const supported = await Linking.canOpenURL(video.url);
-        if (supported) {
-          await Linking.openURL(video.url);
-        } else {
-          Alert.alert('Error', 'Cannot open video. Please install YouTube app or check your internet connection.');
-        }
-      } catch (error) {
-        console.error('Error opening video URL:', error);
-        Alert.alert('Error', 'Failed to open video.');
-      }
-    }
-  }, []);
-
   const handleVideoInteraction = useCallback(async (
     videoId: string, 
-    sectionName: string, 
-    interactionType: 'view' | 'like' | 'dislike'
+    interactionType: 'view' | 'like' | 'dislike' | 'skip' | 'watch' | 'scroll_past'
   ) => {
+    const video = videos.find(v => v.videoId === videoId);
+    if (!video) return;
+
     if (interactionType === 'view') {
       setWatchedVideos(prev => new Set([...prev, videoId]));
     }
 
-    try {
-      await trackTopicEngagement({
-        topic: sectionName,
-        engagementScore: interactionType === 'like' ? 9 : interactionType === 'view' ? 7 : 2,
-        interactionType: interactionType === 'view' ? 'mention' : 
-                        interactionType === 'like' ? 'followup' : 'dismissal',
-        context: `video_recommendation_${sectionName}`
-      });
-    } catch (error) {
-      console.error('Error tracking video interaction:', error);
-    }
-  }, [trackTopicEngagement]);
+    // Track with intelligent system for advanced learning
+    await trackIntelligentInteraction(
+      video,
+      interactionType,
+      0, // watchDuration - will be updated by view duration callback
+      0  // timeOnScreen - will be updated by view duration callback
+    );
 
-  const closeVideoPlayer = useCallback(() => {
-    setShowVideoPlayer(false);
-    setSelectedVideo(null);
-    setCurrentVideoSection('');
-  }, []);
+    // Also track behavior for fallback learning
+    trackBehavior({
+      videoId,
+      title: video.title,
+      channelTitle: video.channelTitle,
+      topics: video.topicTags,
+      duration: 0, // Will be updated by view duration callback
+      totalDuration: 30, // Estimated
+      interactionType,
+      viewOrder: videos.findIndex(v => v.videoId === videoId) + 1,
+      timeSpentOnScreen: 0, // Will be updated
+      wasPlayed: false // Will be updated
+    });
+
+    console.log(`📹 Video ${interactionType}:`, video.title);
+
+    // Trigger background loading based on engagement patterns
+    if (interactionType === 'like' || interactionType === 'watch') {
+      // User is engaged, prepare more similar content
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = setTimeout(triggerBackgroundLoad, 2000);
+    } else if (interactionType === 'scroll_past' || interactionType === 'dislike') {
+      // User is not interested, might need different content
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = setTimeout(triggerBackgroundLoad, 5000);
+    }
+  }, [videos, trackIntelligentInteraction, trackBehavior, triggerBackgroundLoad]);
+
+  const handleVideoViewDuration = useCallback((videoId: string, duration: number, totalDuration: number) => {
+    // Update intelligent tracking with actual view duration
+    const video = videos.find(v => v.videoId === videoId);
+    if (!video) return;
+
+    // Update intelligent system
+    trackIntelligentInteraction(
+      video,
+      duration > totalDuration * 0.7 ? 'watch' : 'view',
+      duration,
+      duration * 1000 // timeOnScreen in milliseconds
+    );
+
+    // Update behavior tracking as well
+    trackBehavior({
+      videoId,
+      title: video.title,
+      channelTitle: video.channelTitle,
+      topics: video.topicTags,
+      duration,
+      totalDuration,
+      interactionType: duration > totalDuration * 0.7 ? 'watch' : 'view',
+      viewOrder: videos.findIndex(v => v.videoId === videoId) + 1,
+      timeSpentOnScreen: duration * 1000,
+      wasPlayed: true
+    });
+  }, [videos, trackIntelligentInteraction, trackBehavior]);
+
+  const handleRequestMoreVideos = useCallback(() => {
+    console.log('� [VideoScreen] User requested more videos');
+    if (!backgroundLoading) {
+      triggerBackgroundLoad();
+    }
+  }, [triggerBackgroundLoad, backgroundLoading]);
+
+  const handleIndexChange = useCallback((index: number) => {
+    setCurrentVideoIndex(index);
+    
+    // Preload more videos when user is getting close to the end
+    if (index >= videos.length - 5 && !backgroundLoading) {
+      triggerBackgroundLoad();
+    }
+  }, [videos.length, backgroundLoading, triggerBackgroundLoad]);
 
   const getSectionIcon = useCallback((permaDimension: string) => {
     const iconMap = {
@@ -187,100 +322,7 @@ export default function VideoRecommendationsScreen({ navigation }: any) {
     return gradientMap[permaDimension as keyof typeof gradientMap] || ['#f3f4f6', '#e5e7eb'];
   }, []);
 
-  // Enhanced video player modal with fallback
-  const renderVideoPlayer = () => {
-    if (!showVideoPlayer || !selectedVideo) return null;
-
-    return (
-      <Modal
-        visible={showVideoPlayer}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={closeVideoPlayer}
-      >
-        <View style={styles.videoPlayerContainer}>
-          {/* Player Header */}
-          <View style={styles.playerHeader}>
-            <TouchableOpacity style={styles.closeButton} onPress={closeVideoPlayer}>
-              <X size={24} color={theme.colors.text} />
-            </TouchableOpacity>
-            <Text style={styles.playerTitle} numberOfLines={1}>
-              {selectedVideo.title}
-            </Text>
-            <TouchableOpacity 
-              style={styles.externalLinkButton}
-              onPress={() => Linking.openURL(selectedVideo.url)}
-            >
-              <ExternalLink size={20} color={theme.colors.primary.main} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Video Player */}
-          <View style={styles.videoWrapper}>
-            {WebView ? (
-              <WebView
-                source={{ uri: selectedVideo.embedUrl }}
-                style={styles.webView}
-                allowsInlineMediaPlayback={true}
-                mediaPlaybackRequiresUserAction={false}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                startInLoadingState={true}
-                renderLoading={() => (
-                  <View style={styles.videoLoading}>
-                    <ActivityIndicator size="large" color={theme.colors.primary.main} />
-                    <Text style={styles.videoLoadingText}>Loading video...</Text>
-                  </View>
-                )}
-                onError={(syntheticEvent: any) => {
-                  const { nativeEvent } = syntheticEvent;
-                  console.error('WebView error: ', nativeEvent);
-                  Alert.alert(
-                    'Video Error', 
-                    'Failed to load video. Would you like to open it in YouTube?',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Open YouTube', onPress: () => Linking.openURL(selectedVideo.url) }
-                    ]
-                  );
-                }}
-              />
-            ) : (
-              // Fallback when WebView is not available
-              <View style={styles.noWebViewContainer}>
-                <Play size={64} color={theme.colors.primary.main} />
-                <Text style={styles.noWebViewTitle}>Video Player Not Available</Text>
-                <Text style={styles.noWebViewDescription}>
-                  WebView is not available. Tap below to open in YouTube.
-                </Text>
-                <TouchableOpacity 
-                  style={styles.openYouTubeButton}
-                  onPress={() => Linking.openURL(selectedVideo.url)}
-                >
-                  <Text style={styles.openYouTubeText}>Open in YouTube</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-
-          {/* Video Info */}
-          <View style={styles.videoInfo}>
-            <Text style={styles.videoTitle}>{selectedVideo.title}</Text>
-            <Text style={styles.videoChannel}>{selectedVideo.channelTitle}</Text>
-            <Text style={styles.videoSection}>From: {currentVideoSection}</Text>
-            
-            {selectedVideo.snippet && (
-              <ScrollView style={styles.videoDescriptionScroll}>
-                <Text style={styles.videoDescription}>{selectedVideo.snippet}</Text>
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
-    );
-  };
-
-  if (loading) {
+  if (loading || personalizationLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary.main} />
@@ -291,146 +333,68 @@ export default function VideoRecommendationsScreen({ navigation }: any) {
     );
   }
 
-  return (
-    <View style={styles.container}>
-      {/* Enhanced Header */}
-      <LinearGradient
-        colors={[theme.colors.primary.main, theme.colors.primary.light]}
-        style={styles.header}
-      >
-        <View style={styles.headerTop}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <ArrowLeft size={24} color={theme.colors.white} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Your Videos</Text>
-          <View style={styles.placeholder} />
-        </View>
-        
-        <Text style={styles.headerSubtitle}>
-          {allVideos.length} videos • {watchedVideos.size} watched
-        </Text>
-        
-        {/* View Toggle */}
-        <View style={styles.viewToggle}>
-          <TouchableOpacity
-            style={[styles.toggleButton, viewMode === 'sections' && styles.activeToggle]}
-            onPress={() => setViewMode('sections')}
-          >
-            <Text style={[styles.toggleText, viewMode === 'sections' && styles.activeToggleText]}>
-              By Topic
+  if (error === 'assessment_required') {
+    return (
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor={theme.colors.primary.main} />
+        <View style={styles.errorContainer}>
+          <View style={styles.assessmentRequiredContainer}>
+            <Sparkles color={theme.colors.primary.main} size={48} />
+            <Text style={styles.assessmentRequiredTitle}>Complete Your Assessment</Text>
+            <Text style={styles.assessmentRequiredDescription}>
+              To get personalized video recommendations, please complete your personality assessment first.
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.toggleButton, viewMode === 'all' && styles.activeToggle]}
-            onPress={() => setViewMode('all')}
-          >
-            <Text style={[styles.toggleText, viewMode === 'all' && styles.activeToggleText]}>
-              All Videos
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.assessmentButton}
+              onPress={() => navigation.navigate('Assessment')}
+            >
+              <Text style={styles.assessmentButtonText}>Start Assessment</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </LinearGradient>
+      </View>
+    );
+  }
 
-      {/* Error Display */}
-      {error && (
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor={theme.colors.primary.main} />
         <View style={styles.errorContainer}>
           <Text style={styles.errorMessage}>{error}</Text>
+          <TouchableOpacity 
+            style={styles.retryButton}
+            onPress={() => fetchVideoSections()}
+          >
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      
+      {/* Background Loading Indicator */}
+      {backgroundLoading && (
+        <View style={styles.backgroundLoadingIndicator}>
+          <ActivityIndicator size="small" color={theme.colors.primary.main} />
+          <Text style={styles.backgroundLoadingText}>Loading more videos...</Text>
         </View>
       )}
 
-      {/* Content */}
-      <ScrollView 
-        style={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Progress Stats */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{videoSections.length}</Text>
-            <Text style={styles.statLabel}>Topics</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{allVideos.length}</Text>
-            <Text style={styles.statLabel}>Videos</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{watchedVideos.size}</Text>
-            <Text style={styles.statLabel}>Watched</Text>
-          </View>
-        </View>
-
-        {/* Content based on view mode */}
-        {viewMode === 'sections' ? (
-          // Sections View
-          <>
-            {videoSections.map((section, index) => (
-              <View key={`${section.topicName}-${index}`} style={styles.sectionContainer}>
-                <LinearGradient
-                  colors={getSectionGradient(section.permaDimension)}
-                  style={styles.sectionHeader}
-                >
-                  <View style={styles.sectionTitleRow}>
-                    {getSectionIcon(section.permaDimension)}
-                    <View style={styles.sectionTitleContainer}>
-                      <Text style={styles.sectionTitle}>{section.topicName}</Text>
-                      <Text style={styles.sectionDescription}>{section.description}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.sectionBadge}>
-                    <Text style={styles.sectionBadgeText}>{section.videos.length}</Text>
-                  </View>
-                </LinearGradient>
-
-                <YouTubeVideoList
-                  videos={section.videos}
-                  topicName={section.topicName}
-                  onVideoInteraction={(videoId, interactionType) => 
-                    handleVideoInteraction(videoId, section.topicName, interactionType)
-                  }
-                  watchedVideos={watchedVideos}
-                  horizontal={true}
-                  onVideoPress={(video) => handleVideoPress(video, section.topicName)}
-                />
-              </View>
-            ))}
-          </>
-        ) : (
-          // All Videos View
-          <View style={styles.allVideosContainer}>
-            <YouTubeVideoList
-              videos={allVideos}
-              onVideoInteraction={(videoId, interactionType) => {
-                const video = allVideos.find(v => v.videoId === videoId);
-                handleVideoInteraction(videoId, video?.sectionName || '', interactionType);
-              }}
-              watchedVideos={watchedVideos}
-              horizontal={false}
-              onVideoPress={(video) => {
-                const videoWithSection = allVideos.find(v => v.videoId === video.videoId);
-                handleVideoPress(video, videoWithSection?.sectionName);
-              }}
-            />
-          </View>
-        )}
-
-        {/* Empty State */}
-        {allVideos.length === 0 && !loading && (
-          <View style={styles.emptyContainer}>
-            <Sparkles color={theme.colors.gray[400]} size={48} />
-            <Text style={styles.emptyTitle}>No videos yet</Text>
-            <Text style={styles.emptyDescription}>
-              Complete your assessment to get personalized video recommendations
-            </Text>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* Video Player Modal with improved fallback */}
-      {renderVideoPlayer()}
+      {/* Full Screen Video Experience */}
+      <FullScreenVideoList
+        videos={videos}
+        onVideoInteraction={handleVideoInteraction}
+        onRequestMoreVideos={handleRequestMoreVideos}
+        onVideoViewDuration={handleVideoViewDuration}
+        watchedVideos={watchedVideos}
+        currentIndex={currentVideoIndex}
+        onIndexChange={handleIndexChange}
+      />
     </View>
   );
 }
@@ -547,6 +511,111 @@ const styles = StyleSheet.create({
   errorMessage: {
     ...theme.typography.body,
     color: theme.colors.error,
+  },
+  assessmentRequiredContainer: {
+    alignItems: 'center',
+    padding: theme.spacing.xl,
+  },
+  assessmentRequiredTitle: {
+    ...theme.typography.h4,
+    color: theme.colors.text,
+    marginTop: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
+    textAlign: 'center',
+  },
+  assessmentRequiredDescription: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: theme.spacing.xl,
+  },
+  assessmentButton: {
+    backgroundColor: theme.colors.primary.main,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.xl,
+    minWidth: 200,
+    alignItems: 'center',
+  },
+  assessmentButtonText: {
+    ...theme.typography.button,
+    color: theme.colors.white,
+    fontWeight: 'bold',
+  },
+  videoListContainer: {
+    paddingTop: theme.spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
+  },
+  loadMoreButton: {
+    backgroundColor: theme.colors.primary.main,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.md,
+    alignItems: 'center',
+    marginVertical: theme.spacing.lg,
+  },
+  loadMoreButtonText: {
+    ...theme.typography.button,
+    color: theme.colors.white,
+    fontWeight: 'bold',
+  },
+  loadingMoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: theme.spacing.lg,
+  },
+  loadingMoreText: {
+    ...theme.typography.body,
+    color: theme.colors.textSecondary,
+    marginLeft: theme.spacing.sm,
+  },
+  videoListHeader: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.lg,
+  },
+  motivationContainer: {
+    backgroundColor: theme.colors.primary.light + '20',
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.md,
+    marginTop: theme.spacing.md,
+    alignItems: 'center',
+  },
+  motivationText: {
+    ...theme.typography.body,
+    color: theme.colors.primary.main,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: theme.colors.primary.main,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.xl,
+    marginTop: theme.spacing.lg,
+  },
+  retryButtonText: {
+    ...theme.typography.button,
+    color: theme.colors.white,
+    fontWeight: 'bold',
+  },
+  backgroundLoadingIndicator: {
+    position: 'absolute',
+    top: 60,
+    right: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  backgroundLoadingText: {
+    color: '#fff',
+    fontSize: 12,
+    marginLeft: 8,
+    fontWeight: '500',
   },
   sectionContainer: {
     marginHorizontal: theme.spacing.lg,

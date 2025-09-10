@@ -275,22 +275,32 @@ export default function AssessmentScreen() {
     try {
       await AsyncStorage.removeItem(ASSESSMENT_PROGRESS_KEY);
       
-      const unifiedProfile = generateUnifiedPersonalization(finalResponses, user.id);
-      
-      const assessmentData = {
+      // Step 1: Save raw assessment data only
+      const rawAssessmentData = {
         userId: user.id,
         responses: finalResponses,
-        unifiedProfile,
         questionnaireVersion: '3.0',
         completedAt: new Date(),
         questionCount: streamlinedQuestions.length,
       };
       
-      const saveResult = await saveAssessment(user.id, assessmentData);
+      const saveResult = await saveAssessment(user.id, rawAssessmentData);
       
       if (!saveResult.success) {
         throw new Error(`Failed to save assessment: ${saveResult.error}`);
       }
+
+      addBotMessage("Processing your responses and generating personalized content...");
+      
+      // Step 2: Generate unified personalization profile
+      console.log('🎯 Generating unified personalization profile...');
+      const unifiedProfile = generateUnifiedPersonalization(finalResponses, user.id);
+      console.log('📊 Generated profile overview:', {
+        userId: unifiedProfile.userId,
+        mbtiType: unifiedProfile.userCore.mbtiType,
+        primaryInterestsCount: unifiedProfile.contentPreferences.primaryInterests.length,
+        focusAreasCount: unifiedProfile.wellnessProfile.focusAreas.length
+      });
       
       const profileWithId = {
         ...unifiedProfile,
@@ -298,8 +308,18 @@ export default function AssessmentScreen() {
         lastUpdated: new Date().toISOString()
       };
       
-      await initializeFromAssessment(profileWithId);
+      // Step 3: Save to userPersonalization collection and generate topic queries
+      console.log('🎯 Initializing personalization profile with topic generation...');
+      const initResult = await initializeFromAssessment(profileWithId);
       
+      if (!initResult.success) {
+        console.error('❌ Failed to initialize personalization:', initResult.error);
+        throw new Error(`Failed to initialize personalization: ${initResult.error}`);
+      }
+      
+      console.log('✅ Personalization profile initialized, topic generation started in background');
+      
+      // Step 4: Update user profile
       await updateUserProfile(user.id, {
         hasCompletedAssessment: true,
         mbtiType: unifiedProfile.userCore.mbtiType,

@@ -49,6 +49,12 @@ export async function generateAllTopicSearchQueries(
     overallHappiness: profile.computed.overallHappiness
   });
 
+  // Validate required profile data
+  if (!profile.contentPreferences?.primaryInterests || profile.contentPreferences.primaryInterests.length === 0) {
+    console.error('❌ [TopicGenerator] No primary interests found in profile, using fallback');
+    return generateFallbackTopicQueries(profile);
+  }
+
   if (!OPENAI_API_KEY) {
     console.warn('⚠️ [TopicGenerator] OpenAI API key not found, using fallback topic queries');
     return generateFallbackTopicQueries(profile);
@@ -174,10 +180,8 @@ Make queries specific, engaging, and likely to find quality content. Avoid gener
 function createBatchUserPrompt(request: TopicGenerationRequest, profile: UnifiedPersonalizationProfile): string {
   const { mbtiType, permaScores, focusAreas, primaryInterests, personalContext } = request;
   
-  // Get all topics from contentPreferences that need queries
-  const allTopics = profile.contentPreferences.topicSearchQueries 
-    ? Object.keys(profile.contentPreferences.topicSearchQueries)
-    : primaryInterests;
+  // Get all topics from primary interests for initial generation
+  const allTopics = profile.contentPreferences.primaryInterests || [];
 
   console.log('📝 [TopicGenerator] Building user prompt for topics:', allTopics);
 
@@ -324,37 +328,60 @@ function validateAndProcessBatchResult(
 function generateFallbackTopicQueries(profile: UnifiedPersonalizationProfile): BatchTopicResult {
   console.log('🔄 [TopicGenerator] Generating fallback topic queries');
   console.log('📊 [TopicGenerator] Fallback input:', {
-    primaryInterestsCount: profile.contentPreferences.primaryInterests.length,
-    focusAreasCount: profile.wellnessProfile.focusAreas.length,
+    primaryInterestsCount: profile.contentPreferences?.primaryInterests?.length || 0,
+    focusAreasCount: profile.wellnessProfile?.focusAreas?.length || 0,
     userId: profile.userId
   });
 
   const fallbackQueries: Record<string, TopicSearchQuery> = {};
   
-  // Generate fallback queries for primary interests
-  profile.contentPreferences.primaryInterests.forEach((interest, index) => {
-    const topicKey = interest.toLowerCase().replace(/\s+/g, '_'); // Fix: Create valid key
-    const priority = Math.max(1, 8 - index);
-    
-    fallbackQueries[topicKey] = {
-      queries: [
-        `${interest} for beginners`,
-        `${interest} motivation and inspiration`,
-        `${interest} tips and techniques`
-      ],
-      platforms: ['youtube'],
-      generatedAt: new Date().toISOString(),
-      permaDimension: 'engagement', // Fix: Always provide valid dimension
-      priority: priority // Fix: Ensure number type
-    };
-    
-    console.log(`📝 [TopicGenerator] Created fallback for interest: "${interest}" (priority: ${priority})`);
-  });
+  // Generate fallback queries for primary interests if they exist
+  const primaryInterests = profile.contentPreferences?.primaryInterests || [];
+  if (primaryInterests.length > 0) {
+    primaryInterests.forEach((interest, index) => {
+      const topicKey = interest.toLowerCase().replace(/[^a-z0-9]/g, '_'); // Create valid key
+      const priority = Math.max(1, 8 - index);
+      
+      fallbackQueries[topicKey] = {
+        queries: [
+          `${interest} for beginners`,
+          `${interest} motivation and inspiration`,
+          `${interest} tips and techniques`
+        ],
+        platforms: ['youtube'],
+        generatedAt: new Date().toISOString(),
+        permaDimension: inferPermaDimensionFromTopic(interest),
+        priority: priority
+      };
+      
+      console.log(`📝 [TopicGenerator] Created fallback for interest: "${interest}" (priority: ${priority})`);
+    });
+  } else {
+    console.warn('⚠️ [TopicGenerator] No primary interests found, creating basic queries');
+    // Create some basic queries if no interests are found
+    const basicTopics = ['personal development', 'motivation', 'productivity', 'wellness'];
+    basicTopics.forEach((topic, index) => {
+      const topicKey = topic.replace(/\s+/g, '_');
+      fallbackQueries[topicKey] = {
+        queries: [
+          `${topic} for beginners`,
+          `${topic} tips and advice`,
+          `${topic} inspiration`
+        ],
+        platforms: ['youtube'],
+        generatedAt: new Date().toISOString(),
+        permaDimension: 'engagement',
+        priority: 7 - index
+      };
+      console.log(`📝 [TopicGenerator] Created basic fallback for: "${topic}"`);
+    });
+  }
 
-  // Generate queries for focus areas
-  profile.wellnessProfile.focusAreas.forEach((area, index) => {
+  // Generate queries for focus areas if they exist
+  const focusAreas = profile.wellnessProfile?.focusAreas || [];
+  focusAreas.forEach((area, index) => {
     const focusQueries = getFallbackQueriesForDimension(area);
-    if (focusQueries && focusQueries.length > 0) { // Fix: Check array length
+    if (focusQueries && focusQueries.length > 0) {
       const priority = 10 - index;
       const topicKey = `${area}_focus`;
       
@@ -362,8 +389,8 @@ function generateFallbackTopicQueries(profile: UnifiedPersonalizationProfile): B
         queries: focusQueries,
         platforms: ['youtube'],
         generatedAt: new Date().toISOString(),
-        permaDimension: area, // Fix: Use the actual area as dimension
-        priority: priority // Fix: Ensure number type
+        permaDimension: area,
+        priority: priority
       };
       
       console.log(`🎯 [TopicGenerator] Created fallback for focus area: "${area}" (priority: ${priority})`);
@@ -458,4 +485,25 @@ function getFallbackQueriesForDimension(dimension: string): string[] {
     'motivation and inspiration',
     'positive life skills'
   ]; // Fix: Always return an array
+}
+
+function inferPermaDimensionFromTopic(topic: string): string {
+  const topicLower = topic.toLowerCase();
+  
+  // Topic-based mapping to PERMA dimensions
+  if (topicLower.includes('relationship') || topicLower.includes('social') || topicLower.includes('friends') || topicLower.includes('family')) {
+    return 'relationships';
+  }
+  if (topicLower.includes('goal') || topicLower.includes('achieve') || topicLower.includes('success') || topicLower.includes('accomplish')) {
+    return 'accomplishment';
+  }
+  if (topicLower.includes('meaning') || topicLower.includes('purpose') || topicLower.includes('spiritual') || topicLower.includes('volunteer')) {
+    return 'meaning';
+  }
+  if (topicLower.includes('positive') || topicLower.includes('happy') || topicLower.includes('joy') || topicLower.includes('fun')) {
+    return 'positiveEmotion';
+  }
+  
+  // Default to engagement for most interests
+  return 'engagement';
 }
